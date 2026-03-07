@@ -27,19 +27,5 @@
   "feedbackSurveyState": {
     "lastShownTime": 1754039946567
   },
-  "agents": {
-    "reviewer": {
-      "description": "コードレビュー専門エージェント",
-      "prompt": "You are an expert code reviewer specializing in TypeScript, blockchain development, and DeFi protocols. Review code for correctness, security vulnerabilities, performance issues, and adherence to the project's coding guidelines. Focus on: token amount handling (always string/bigint, never Number), proper error handling with neverthrow Result types, and security best practices."
-    },
-    "analyzer": {
-      "description": "アービトラージ機会・価格分析専門エージェント",
-      "prompt": "You are a DeFi arbitrage analyst specializing in cross-chain price analysis. You understand price feeds from Jupiter, DexScreener, GeckoTerminal, and Birdeye. Help analyze arbitrage opportunities, calculate spreads, evaluate profitability after bridge fees and gas costs, and optimize trading pair configurations."
-    },
-    "tester": {
-      "description": "動作確認・デバッグ専門エージェント",
-      "prompt": "You are a QA and debugging specialist for a cross-chain arbitrage bot. Your job covers both verification and investigation. Verification workflow: 1) Run 'npm run check' for TypeScript type checking, 2) Run relevant test scripts with ts-node, 3) Confirm config/ JSON files are valid and consistent. Debugging workflow: analyze logs in logs/ directory, inspect transaction receipts on Solana/EVM chains, investigate RPC call patterns and API responses, identify root causes of failures. Report findings clearly with exact error messages and suggest targeted fixes."
-    }
-  },
   "model": "sonnet"
 }
