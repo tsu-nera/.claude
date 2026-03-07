@@ -1,0 +1,33 @@
+# 認証情報
+.credentials.json
+
+# ローカル設定
+settings.local.json
+
+# 自動生成データ
+history.jsonl
+stats-cache.json
+mcp-needs-auth-cache.json
+
+# ログ・デバッグ
+debug/
+file-history/
+shell-snapshots/
+paste-cache/
+backups/
+telemetry/
+statsig/
+
+# セッション・タスク
+session-env/
+tasks/
+plans/
+todos/
+ide/
+cache/
+
+# プロジェクトメモリ（機密の可能性）
+projects/
+
+# プラグイン（自動ダウンロード）
+plugins/
