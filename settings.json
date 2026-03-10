@@ -1,5 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "sonnet",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -26,6 +27,5 @@
   "skipDangerousModePermissionPrompt": true,
   "feedbackSurveyState": {
     "lastShownTime": 1754039946567
-  },
-  "model": "sonnet"
+  }
 }
