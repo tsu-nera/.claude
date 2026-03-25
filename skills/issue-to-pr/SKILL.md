@@ -84,6 +84,14 @@ Agent(
 2. タスク分割が必要な場合、ファイル境界で分割
 3. 依存順序の確認
 
+**Test planの設計**（小規模含む全ケース）:
+IssueのACと変更内容から、PRのTest planに含めるテスト項目を設計する。
+`/test-pr` で機械的に実行されるため、以下を守ること:
+- 実行可能な具体的コマンドを記載（`npm run transfers -- --source api` 等）
+- 期待結果を明記（「一覧が表示される」「エラーなく完了する」等）
+- 回帰確認（変更の影響を受けうる既存機能の確認コマンド）を含める
+- 曖昧な項目（「正しく動作する」）は禁止
+
 ---
 
 ### Phase 4: 実装
@@ -155,8 +163,9 @@ gh pr create --title "<タイトル>" --body "$(cat <<'EOF'
 Closes #<issue番号>
 
 ## Test plan
-- [ ] 品質チェック（型チェック/lint/test）パス
-- [ ] <機能固有のテスト項目>
+- [ ] `pnpm run check` パス
+- [ ] <具体的な実行コマンドと期待結果>
+- [ ] <回帰確認: 既存機能への影響がないこと>
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
