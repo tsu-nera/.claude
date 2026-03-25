@@ -1,13 +1,13 @@
 ---
 name: gh-sub-issue
-description: GitHub で子イシューを作成し、親イシューの本文にチェックリストで関連付ける
+description: GitHub で子イシューを作成し、親イシューにネイティブのサブイシューとして関連付ける
 user-invocable: true
 allowed-tools: Bash
 ---
 
 # GitHub サブイシュー作成スキル
 
-GitHub API はサブイシュー（親子関係）の設定をサポートしていないため、以下の手順で代替する。
+GitHub GraphQL API の `addSubIssue` mutation でネイティブのサブイシュー（親子関係）を設定する。
 
 ## 引数パース
 
@@ -22,7 +22,7 @@ GitHub API はサブイシュー（親子関係）の設定をサポートして
 
 ### Step 1: 親イシューの確認
 
-```
+```bash
 gh issue view <parent> --repo <repo>
 ```
 
@@ -30,33 +30,34 @@ gh issue view <parent> --repo <repo>
 
 ### Step 2: サブイシューの作成
 
-```
+```bash
 gh issue create --repo <repo> --title "<title>" --body "<body>"
 ```
 
-本文には必ず以下を含める:
+作成後、新しいイシューの番号を取得する。
+
+### Step 3: 親子関係の設定（GraphQL API）
+
+両イシューの node ID を取得して `addSubIssue` mutation を実行する:
+
+```bash
+# 親イシューの node ID 取得
+PARENT_ID=$(gh issue view <parent> --repo <repo> --json id -q .id)
+
+# 子イシューの node ID 取得
+CHILD_ID=$(gh issue view <child> --repo <repo> --json id -q .id)
+
+# サブイシューとして関連付け
+gh api graphql -f query='
+  mutation AddSubIssue($parentId: ID!, $childId: ID!) {
+    addSubIssue(input: {issueId: $parentId, subIssueId: $childId}) {
+      issue { number title }
+      subIssue { number title }
+    }
+  }
+' -f parentId="$PARENT_ID" -f childId="$CHILD_ID"
 ```
-親イシュー: #<parent>
-```
-
-### Step 3: 親イシューの本文を更新
-
-親イシューの末尾に「## 関連イシュー」セクションがなければ追加し、
-作成したサブイシューをチェックリスト形式で追記する:
-
-```
-## 関連イシュー
-
-- [ ] #<new-issue> <title>
-```
-
-既に「## 関連イシュー」セクションがある場合は、そこに行を追記する。
-
-手順:
-1. `gh issue view <parent> --repo <repo> --json body -q .body` で現在の本文を取得
-2. 末尾にチェックリスト行を追加した新しい本文を作成
-3. `gh issue edit <parent> --repo <repo> --body "<new-body>"` で更新
 
 ### Step 4: 完了報告
 
-作成したイシューの URL と、親イシューの更新内容を報告する。
+作成したイシューの URL と、親子関係が設定されたことを報告する。

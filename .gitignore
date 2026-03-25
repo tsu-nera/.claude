@@ -8,6 +8,7 @@ settings.local.json
 history.jsonl
 stats-cache.json
 mcp-needs-auth-cache.json
+usage-data/
 
 # ログ・デバッグ
 debug/
@@ -20,6 +21,7 @@ statsig/
 
 # セッション・タスク
 session-env/
+sessions/
 tasks/
 plans/
 todos/
