@@ -87,6 +87,7 @@ Agent(
 **Test planの設計**（小規模含む全ケース）:
 IssueのACと変更内容から、PRのTest planに含めるテスト項目を設計する。
 `/test-pr` で機械的に実行されるため、以下を守ること:
+- プロジェクトルートに `docs/test-guidelines.md` があれば読み、Test plan設計に反映する
 - 実行可能な具体的コマンドを記載（`npm run transfers -- --source api` 等）
 - 期待結果を明記（「一覧が表示される」「エラーなく完了する」等）
 - 回帰確認（変更の影響を受けうる既存機能の確認コマンド）を含める
