@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 # LGTM - PRをマージしてブランチを削除する
 
 ユーザーがPRをレビューしてOKと判断したため、マージしてブランチを削除する。
@@ -13,17 +17,30 @@
    - failしている場合はユーザーに報告して中断する
 
 3. **worktree判定と事前準備**
-   - `git rev-parse --git-dir` の出力に `worktrees` が含まれればworktree環境
+   - 以下の1コマンドで必要な情報をすべて収集する:
+     ```bash
+     GIT_DIR=$(git rev-parse --git-dir); BRANCH=$(git rev-parse --abbrev-ref HEAD); WORKTREE_PATH=$(pwd); echo "git_dir=$GIT_DIR branch=$BRANCH worktree=$WORKTREE_PATH"
+     ```
+   - `GIT_DIR` に `worktrees` が含まれればworktree環境
    - worktree環境の場合、**以降すべてのgitコマンドの前に**メインリポジトリへ移動する:
-     - メインリポジトリパスの取得: `git -C $(git rev-parse --git-common-dir)/.. rev-parse --show-toplevel`
-     - `cd <メインリポジトリパス>` で移動（worktree削除後にCWDが消えて操作不能になるのを防ぐ）
-   - 現在のブランチ名とworktreeパスを変数に保存しておく
+     ```bash
+     cd $(git -C $(git rev-parse --git-common-dir)/.. rev-parse --show-toplevel)
+     ```
+     （worktree削除後にCWDが消えて操作不能になるのを防ぐ）
 
-4. **マージ**
+4. **PRブランチのworktree事前チェック**
+   - PRのブランチ名を取得: `gh pr view <PR番号> --json headRefName -q .headRefName`
+   - `git worktree list` でそのブランチが別のworktreeで使用中か確認
+   - 使用中の場合、マージ前にworktreeを削除する:
+     ```bash
+     git worktree remove <worktreeパス> --force
+     ```
+
+5. **マージ**
    - **通常のブランチ**: `gh pr merge <PR番号> --merge --delete-branch`
    - **worktree環境**: `gh pr merge <PR番号> --merge`（`--delete-branch` は内部でgit checkoutを試みて失敗するため使わない）
 
-5. **ローカルのクリーンアップ**
+6. **ローカルのクリーンアップ**
    - **通常のブランチ**:
      - `git checkout main` でmainに戻る
      - `git pull` でmainを最新化
@@ -34,7 +51,7 @@
      - `git branch -d <ブランチ名>` でローカルブランチ削除
      - `git push origin --delete <ブランチ名>` でリモートブランチ削除
 
-6. **完了報告**
+7. **完了報告**
    - マージされたcommit hashとPR番号を報告する
 
 ## 注意事項
