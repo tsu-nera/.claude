@@ -1,5 +1,6 @@
 # 認証情報
 .credentials.json
+.mcp.json
 
 # ローカル設定
 settings.local.json
@@ -30,6 +31,9 @@ cache/
 
 # プロジェクトメモリ（機密の可能性）
 projects/
+
+# エージェントチーム
+teams/
 
 # プラグイン（自動ダウンロード）
 plugins/

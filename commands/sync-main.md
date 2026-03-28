@@ -1,17 +1,17 @@
-# merge-main
+# sync-main
 
 Merge latest changes from main branch to current branch
 
 ## Usage
-Run this command when you want to merge the latest main branch changes into your current feature branch.
+Run this command when you want to merge the latest main branch changes into your current feature branch (works in worktrees too).
 
 ## Command
 ```bash
-echo "Merging main branch into current branch..."
+echo "Syncing main branch into current branch..."
 git fetch origin
 echo "Fetched latest changes from origin"
 git merge origin/main
-echo "Merge completed successfully"
+echo "Sync completed successfully"
 git status
 ```
 
