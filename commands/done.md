@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 # Task Complete Command
 
 Automatically commit changes and push to remote repository when a task is completed.
