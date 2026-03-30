@@ -12,11 +12,7 @@ model: haiku
    - `gh pr list` で現在のPRを確認
    - 対象のPR番号を特定する（引数で指定された場合はそれを使う）
 
-2. **CIの状態を確認**
-   - `gh pr checks <PR番号>` でCIがpassしているか確認
-   - failしている場合はユーザーに報告して中断する
-
-3. **worktree判定と事前準備**
+2. **worktree判定と事前準備**
    - 以下の1コマンドで必要な情報をすべて収集する:
      ```bash
      GIT_DIR=$(git rev-parse --git-dir); BRANCH=$(git rev-parse --abbrev-ref HEAD); WORKTREE_PATH=$(pwd); echo "git_dir=$GIT_DIR branch=$BRANCH worktree=$WORKTREE_PATH"

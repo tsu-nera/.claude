@@ -30,8 +30,10 @@ GitHub Issueを入力に、調査→設計→実装→品質チェック→PR作
 
 ```bash
 gh issue view <番号>
-gh issue view <番号> --comments
 ```
+
+**コメントはデフォルトでは読まない。** Issueのbodyに方針・AC・変更対象が整理されていることを前提とする。
+bodyに「コメントも参照」等の指示がある場合のみ `gh issue view <番号> --comments` を実行する。
 
 Issueの品質を判定する:
 
@@ -210,11 +212,6 @@ Closes #<issue番号>
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 )"
-```
-
-PR作成後:
-```bash
-gh pr checks <PR番号> --watch
 ```
 
 ---
