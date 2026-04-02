@@ -24,6 +24,16 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/inject-session-id.sh"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
