@@ -148,6 +148,7 @@ Agent(
 - 型定義の変更がある場合、その詳細
 - ブランチ命名規則（ラベルから: feature→feat/, fix→fix/, improve→refactor/）
 - 「完了後に `pnpm run check` を実行し型チェックを通すこと」
+- 「`pnpm install` は実行しないこと（メインのnode_modulesシンボリックリンクが壊れる）」
 - 「`resources/` はコミットに含めないこと」
 - 「Phase 5-6の手順に従ってコミット・PRを作成すること」
 
@@ -161,7 +162,7 @@ worktreeエージェント内でさらに複数のsonnet worktreeサブエージ
 
 ### Phase 5: 品質チェック（worktree内で実行）
 
-1. **品質チェック実行**: `pnpm run check`
+1. **品質チェック実行**: `pnpm run check && pnpm run test`
 2. **失敗時**: 直接修正。3回失敗したら人間に報告。
 3. **スモークテスト**: IssueのACまたはTest planから**1つ**コマンドを選んで実行し、期待通りの出力が得られるか確認する。空結果やバリデーションエラーはFAIL扱い。失敗したら修正してから次へ進む。
 4. **差分確認**: `git diff main` で全変更を確認。`resources/` が混入していないか確認。
