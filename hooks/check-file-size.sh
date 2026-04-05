@@ -32,7 +32,7 @@ fi
 LINE_COUNT=$(wc -l < "$FILE_PATH")
 
 if [[ "$LINE_COUNT" -gt "$MAX_LINES" ]]; then
-  echo '{"result":"warn","message":"'"$FILE_PATH"' is '"$LINE_COUNT"' lines (limit: '"$MAX_LINES"'). Consider splitting this file."}'
+  echo '{"decision":"block","reason":"'"$FILE_PATH"' is '"$LINE_COUNT"' lines (limit: '"$MAX_LINES"'). Consider splitting this file into smaller modules."}'
 else
   exit 0
 fi
