@@ -2,9 +2,9 @@
 model: haiku
 ---
 
-# Task Complete Command
+# Commit Command
 
-Automatically commit changes and push to remote repository when a task is completed.
+変更をコミットしてリモートにプッシュする。会話の途中でも使用可能。
 
 ## What this command does:
 
