@@ -1,3 +1,6 @@
+## General Tips
+- システムコンテキストの日付から曜日を判断しない。`date +%A` で確認すること
+
 ## Development Tips
 
 ## Communication Strategy
