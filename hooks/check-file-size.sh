@@ -2,7 +2,7 @@
 # ~/.claude/hooks/check-file-size.sh
 # PostToolUse hook: Edit/Write後にファイル行数をチェック
 
-MAX_LINES=1000
+MAX_LINES=500
 
 JSON_INPUT=$(cat)
 TOOL_NAME=$(echo "$JSON_INPUT" | jq -r '.tool_name // empty')
