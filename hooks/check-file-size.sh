@@ -19,6 +19,11 @@ if [[ -z "$FILE_PATH" || ! -f "$FILE_PATH" ]]; then
   exit 0
 fi
 
+# src/ 配下のみ対象
+if [[ ! "$FILE_PATH" =~ /src/ ]]; then
+  exit 0
+fi
+
 # ソースコードのみ対象
 if [[ ! "$FILE_PATH" =~ \.(ts|tsx|js|jsx|py)$ ]]; then
   exit 0
