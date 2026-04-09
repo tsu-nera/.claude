@@ -24,28 +24,23 @@ model: haiku
      ```
      （worktree削除後にCWDが消えて操作不能になるのを防ぐ）
 
-4. **PRブランチのworktree事前チェック**
+4. **PRブランチのworktree事前チェックと削除**
    - PRのブランチ名を取得: `gh pr view <PR番号> --json headRefName -q .headRefName`
-   - `git worktree list` でそのブランチが別のworktreeで使用中か確認
-   - 使用中の場合、マージ前にworktreeを削除する:
+   - `git worktree list` でそのブランチがworktreeで使用中か確認
+   - 使用中の場合、**マージ前に**worktreeを削除する:
      ```bash
      git worktree remove <worktreeパス> --force
      ```
 
 5. **マージ**
-   - **通常のブランチ**: `gh pr merge <PR番号> --merge --delete-branch`
-   - **worktree環境**: `gh pr merge <PR番号> --merge`（`--delete-branch` は内部でgit checkoutを試みて失敗するため使わない）
+   - 常に `gh pr merge <PR番号> --merge` を使う（`--delete-branch` は付けない）
+   - 理由: `--delete-branch` はローカルブランチ削除時にworktree残存等で失敗しやすく、マージ自体も巻き添えで失敗する。ブランチ削除は次のステップで明示的に行う
 
 6. **ローカルのクリーンアップ**
-   - **通常のブランチ**:
-     - `git checkout main` でmainに戻る
-     - `git pull` でmainを最新化
-     - `git branch -d <ブランチ名>` でローカルブランチ削除
-   - **worktree環境**（すでにメインリポジトリにいる）:
-     - `git pull` でmainを最新化
-     - `git worktree remove <worktreeパス>`（存在する場合）
-     - `git branch -d <ブランチ名>` でローカルブランチ削除
-     - `git push origin --delete <ブランチ名>` でリモートブランチ削除
+   - worktree環境の場合はすでにメインリポジトリにいるはず。そうでなければ `git checkout main`
+   - `git pull` でmainを最新化
+   - `git branch -d <ブランチ名>` でローカルブランチ削除（残っている場合）
+   - `git push origin --delete <ブランチ名>` でリモートブランチ削除（残っている場合）
 
 7. **完了報告**
    - マージされたcommit hashとPR番号を報告する

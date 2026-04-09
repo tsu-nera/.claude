@@ -11,8 +11,10 @@ fi
 
 COMMAND=$(echo "$JSON_INPUT" | jq -r '.tool_input.command // empty')
 
-# Only check gh issue create/comment commands
-if ! echo "$COMMAND" | grep -qE 'gh issue (create|comment)'; then
+# Only check 'gh issue create' or 'gh issue comment' commands (exact start match)
+# Split on first space to get the actual command
+FIRST_PART=$(echo "$COMMAND" | cut -d' ' -f1-3)
+if ! [[ "$FIRST_PART" =~ ^gh\ issue\ (create|comment) ]]; then
     exit 0
 fi
 
