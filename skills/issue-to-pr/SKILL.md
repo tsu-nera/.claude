@@ -203,14 +203,15 @@ EOF
 ```
 
 #### PR作成
+PRのタイトル・本文は**日本語**で記述する。
 ```bash
-gh pr create --title "<タイトル>" --body "$(cat <<'EOF'
-## Summary
+gh pr create --title "<日本語タイトル>" --body "$(cat <<'EOF'
+## 概要
 <変更内容の箇条書き>
 
 Closes #<issue番号>
 
-## Test plan
+## テスト計画
 - [ ] `pnpm run check` パス
 - [ ] <具体的な実行コマンドと期待結果>
 - [ ] <回帰確認: 既存機能への影響がないこと>
