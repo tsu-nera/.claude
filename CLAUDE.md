@@ -2,7 +2,7 @@
 - システムコンテキストの日付から曜日を判断しない。`date +%A` で確認すること
 
 ## Development Tips
-- `gh issue create` / `gh issue comment` の本文末尾には必ずセッションIDフッターを付与すること:
+- `gh issue create` / `gh issue comment` / `gh pr create` の本文末尾には必ずセッションIDフッターを付与すること:
   ```
   ---
   🤖 Claude Code session: `$CLAUDE_SESSION_ID`

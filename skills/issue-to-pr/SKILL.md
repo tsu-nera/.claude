@@ -215,8 +215,6 @@ Closes #<issue番号>
 - [ ] `pnpm run check` パス
 - [ ] <具体的な実行コマンドと期待結果>
 - [ ] <回帰確認: 既存機能への影響がないこと>
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 )"
 ```

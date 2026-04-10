@@ -48,9 +48,6 @@ bodyのフォーマット（既存の構造を尊重しつつ）:
 
 - [ ] タスク1
 - [ ] タスク2
-
----
-🤖 Generated with [Claude Code](https://claude.ai/code)
 ```
 
 ### Step 3: Issue更新

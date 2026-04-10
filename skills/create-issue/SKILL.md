@@ -46,9 +46,6 @@ bodyのフォーマット:
 
 - [ ] タスク1
 - [ ] タスク2
-
----
-🤖 Generated with [Claude Code](https://claude.ai/code)
 ```
 
 ### Step 2: Issue作成
