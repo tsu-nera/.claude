@@ -55,6 +55,13 @@
       }
     ]
   },
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "claude-code-setup@claude-plugins-official": true
+  },
   "alwaysThinkingEnabled": true,
   "effortLevel": "low",
   "skipDangerousModePermissionPrompt": true,
