@@ -151,10 +151,10 @@ Agent(
 - 具体的な修正内容（コード例があれば含める）
 - 型定義の変更がある場合、その詳細
 - ブランチ命名規則（ラベルから: feature→feat/, fix→fix/, improve→refactor/）
-- 「完了後に `pnpm run check` を実行し型チェックを通すこと」
-- 「`pnpm install` は実行しないこと（メインのnode_modulesシンボリックリンクが壊れる）」
+- 「`pnpm install` は実行しないこと。代わりに `ln -s <main-repo>/node_modules <worktree>/node_modules` でシンボリックリンクを作成し、`pnpm run check` で型チェックを通すこと」
 - 「`resources/` はコミットに含めないこと」
 - 「Phase 5-6の手順に従ってコミット・PRを作成すること」
+- 「PR作成時のセッションIDフッターには `$CLAUDE_SESSION_ID` ではなく、この値をそのまま使うこと: `<親セッションの$CLAUDE_SESSION_ID値>`」
 
 **Agentへのpromptに含めてはいけない情報**:
 - 曖昧な指示（「適切に修正して」）
@@ -216,7 +216,10 @@ Closes #<issue番号>
 - [ ] <具体的な実行コマンドと期待結果>
 - [ ] <回帰確認: 既存機能への影響がないこと>
 EOF
-)"
+)
+
+---
+\`🤖 Claude Code session: <親セッションの$CLAUDE_SESSION_ID値をここに埋め込む>\`"
 ```
 
 ---

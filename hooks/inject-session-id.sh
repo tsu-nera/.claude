@@ -11,9 +11,14 @@ fi
 
 COMMAND=$(echo "$JSON_INPUT" | jq -r '.tool_input.command // empty')
 
-# Only check 'gh issue create', 'gh issue comment', 'gh pr create' commands
+# Only check 'gh issue/pr create/comment' and 'edit --body' commands
 FIRST_PART=$(echo "$COMMAND" | cut -d' ' -f1-3)
-if ! [[ "$FIRST_PART" =~ ^gh\ (issue|pr)\ (create|comment) ]]; then
+if [[ "$FIRST_PART" =~ ^gh\ (issue|pr)\ edit ]]; then
+    # edit commands only need session ID when --body is being changed
+    if ! echo "$COMMAND" | grep -q '\-\-body'; then
+        exit 0
+    fi
+elif ! [[ "$FIRST_PART" =~ ^gh\ (issue|pr)\ (create|comment) ]]; then
     exit 0
 fi
 

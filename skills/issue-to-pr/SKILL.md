@@ -130,12 +130,12 @@ Agent(
     <test-specのテスト項目をチェックリスト形式で記載>
 
     ---
-    🤖 Claude Code session: \`$CLAUDE_SESSION_ID\`
+    🤖 Claude Code session: \`<親セッションの$CLAUDE_SESSION_ID値をここに埋め込む>\`
     EOF
     )'
 
     ## 注意事項
-    - `pnpm install` は実行しないこと（シンボリックリンクが壊れる）
+    - `pnpm install` は実行しないこと。代わりに `ln -s <main-repo>/node_modules <worktree>/node_modules` でシンボリックリンクを作成
     - `resources/` はコミットに含めないこと
     - 設計変更はしないこと。仕様に問題がある場合は中断して報告
     - ブランチ命名規則: ラベルから feature→feat/, fix→fix/, improve→refactor/

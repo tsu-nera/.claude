@@ -37,7 +37,10 @@ PRのbodyから以下を抽出:
 3. 既存worktreeがあれば → そのworktreeディレクトリを作業ディレクトリとして使用
 4. なければ → `gh pr checkout <PR番号>` で切り替え
 
-worktreeの場合は `pnpm install` を実行（node_modulesが共有されないため）。
+**worktreeでの実行時の注意**:
+- `pnpm install` は実行しない（メインの `node_modules` シンボリックリンクが壊れる）
+- 代わりにメインの `node_modules` をシンボリックリンクする: `ln -s <main-repo>/node_modules <worktree>/node_modules`
+- これにより `pnpm run check` / `pnpm run test` がそのまま動く
 
 ---
 

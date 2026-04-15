@@ -1,5 +1,6 @@
 ## General Tips
 - システムコンテキストの日付から曜日を判断しない。`date +%A` で確認すること
+- SSH接続が失敗した場合は、数秒待ってからリトライすること（一時的なネットワーク障害の可能性がある）
 
 ## Development Tips
 - `gh issue create` / `gh issue comment` / `gh pr create` の本文末尾には必ずセッションIDフッターを付与すること:
