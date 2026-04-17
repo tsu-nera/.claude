@@ -1,6 +1,6 @@
 ---
-skill: issue-to-lgtm
-description: GitHub Issueを読み、設計→実装→テスト→マージまで一気通貫で実行する
+skill: issue-to-lgtm-agents
+description: GitHub Issueを読み、設計→実装→テスト→マージまで一気通貫で実行する（planner/coder/validatorエージェント使用版）
 user-invocable: true
 ---
 

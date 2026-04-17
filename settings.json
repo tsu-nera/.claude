@@ -67,5 +67,6 @@
   "skipDangerousModePermissionPrompt": true,
   "feedbackSurveyState": {
     "lastShownTime": 1754039946567
-  }
+  },
+  "model": "sonnet"
 }
