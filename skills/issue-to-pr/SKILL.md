@@ -130,7 +130,14 @@ Phase 1-3の結果を踏まえ、**設計に不明点・判断が分かれるポ
 ### Phase 4: 実装
 
 実装は **`model: "sonnet"`, `isolation: "worktree"` のエージェントにハンドオフ**する。
-worktreeにより、複数セッションが同時実行されても競合しない。
+**例外なし。** 1行修正でも、6ファイル×1行でも、必ず worktree を使う。
+
+直接ブランチで作業してはいけない理由:
+- mainに未コミット変更があると、PR push時に巻き込むリスクがある
+- 複数セッションが同時実行されても worktree なら競合しない
+- 「小さい修正だから直接」は判断ミスの温床 — 行数ではなく隔離の必要性で判断する
+
+API overloaded 等で worktree 起動が失敗しても、直接ブランチ作業に fallback せず worktree をリトライする。
 
 ```
 Agent(
@@ -151,8 +158,8 @@ Agent(
 - 具体的な修正内容（コード例があれば含める）
 - 型定義の変更がある場合、その詳細
 - ブランチ命名規則（ラベルから: feature→feat/, fix→fix/, improve→refactor/）
-- 「`pnpm install` は実行しないこと。代わりに `ln -s <main-repo>/node_modules <worktree>/node_modules` でシンボリックリンクを作成し、`pnpm run check` で型チェックを通すこと」
-- 「`resources/` はコミットに含めないこと」
+- 「worktree では依存を再 install しないこと。Node は `ln -s <main-repo>/node_modules <worktree>/node_modules` で node_modules を共有、Python は main の `.venv` 利用または `uv sync`（プロジェクト CLAUDE.md の Development Environment 節に従う）。品質チェックは Phase 5『ツーリング判定』の手順で実行すること」
+- 「プロジェクトの CLAUDE.md にコミット除外対象（キャッシュ・生成物ディレクトリ等）の指定があれば従い、コミットに含めないこと」
 - 「Phase 5-6の手順に従ってコミット・PRを作成すること」
 - 「PR作成時のセッションIDフッターには `$CLAUDE_SESSION_ID` ではなく、この値をそのまま使うこと: `<親セッションの$CLAUDE_SESSION_ID値>`」
 
@@ -166,10 +173,16 @@ worktreeエージェント内でさらに複数のsonnet worktreeサブエージ
 
 ### Phase 5: 品質チェック（worktree内で実行）
 
-1. **品質チェック実行**: `pnpm run check && pnpm run test`
+1. **品質チェック実行（ツーリング判定）**: 以下の優先順で check/test コマンドを決めて実行する。
+   1. プロジェクト CLAUDE.md に check/test コマンドの明示があれば最優先（独自エイリアス・非自明な手順を吸収）
+   2. 無ければ manifest + lockfile から自動判定:
+      - **Node**: `package.json` の `scripts`、lockfile（`pnpm-lock.yaml`/`package-lock.json`/`yarn.lock`）でパッケージマネージャを判定 → `<pm> run check && <pm> run test`
+      - **Python**: `pyproject.toml`/`setup.cfg` から `ruff check` / `mypy` / `pytest`、`uv.lock` があれば `uv run` 経由
+      - Makefile に `check`/`test` ターゲットがあればそれを使用
+   3. テスト基盤が存在しない場合: 基盤を新設せず、対象モジュールの inline smoke test（`__main__` / `require.main === module`）で検証し、その旨を PR に記載する
 2. **失敗時**: 直接修正。3回失敗したら人間に報告。
 3. **スモークテスト**: IssueのACまたはTest planから**1つ**コマンドを選んで実行し、期待通りの出力が得られるか確認する。空結果やバリデーションエラーはFAIL扱い。失敗したら修正してから次へ進む。
-4. **差分確認**: `git diff main` で全変更を確認。`resources/` が混入していないか確認。
+4. **差分確認**: `git diff main` で全変更を確認。意図しないファイル（プロジェクトのコミット除外対象等）が混入していないか確認。
 5. **mainとのコンフリクトチェック**:
 ```bash
 git fetch origin main
@@ -191,7 +204,7 @@ fi
 
 #### コミット
 ```bash
-git add <変更ファイル>  # resources/ を含めない
+git add <変更ファイル>  # プロジェクトのコミット除外対象を含めない
 git commit -m "$(cat <<'EOF'
 <type>: <概要>
 
@@ -212,7 +225,7 @@ gh pr create --title "<日本語タイトル>" --body "$(cat <<'EOF'
 Closes #<issue番号>
 
 ## テスト計画
-- [ ] `pnpm run check` パス
+- [ ] 型/lint/test チェック（Phase 5 ツーリング判定で決定したコマンド）パス
 - [ ] <具体的な実行コマンドと期待結果>
 - [ ] <回帰確認: 既存機能への影響がないこと>
 EOF
