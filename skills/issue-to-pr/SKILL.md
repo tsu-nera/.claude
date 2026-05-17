@@ -158,8 +158,8 @@ Agent(
 - 具体的な修正内容（コード例があれば含める）
 - 型定義の変更がある場合、その詳細
 - ブランチ命名規則（ラベルから: feature→feat/, fix→fix/, improve→refactor/）
-- 「worktree では依存を再 install しないこと。Node は `ln -s <main-repo>/node_modules <worktree>/node_modules` で node_modules を共有、Python は main の `.venv` 利用または `uv sync`（プロジェクト CLAUDE.md の Development Environment 節に従う）。品質チェックは Phase 5『ツーリング判定』の手順で実行すること」
-- 「プロジェクトの CLAUDE.md にコミット除外対象（キャッシュ・生成物ディレクトリ等）の指定があれば従い、コミットに含めないこと」
+- 「worktree の依存セットアップ・品質チェックは `~/.claude/docs/worktree-tooling.md` §1-2 に従うこと」
+- 「コミット除外対象は `~/.claude/docs/worktree-tooling.md` §3 に従い、`git add` は関連ファイルを明示すること」
 - 「Phase 5-6の手順に従ってコミット・PRを作成すること」
 - 「PR作成時のセッションIDフッターには `$CLAUDE_SESSION_ID` ではなく、この値をそのまま使うこと: `<親セッションの$CLAUDE_SESSION_ID値>`」
 
@@ -173,13 +173,7 @@ worktreeエージェント内でさらに複数のsonnet worktreeサブエージ
 
 ### Phase 5: 品質チェック（worktree内で実行）
 
-1. **品質チェック実行（ツーリング判定）**: 以下の優先順で check/test コマンドを決めて実行する。
-   1. プロジェクト CLAUDE.md に check/test コマンドの明示があれば最優先（独自エイリアス・非自明な手順を吸収）
-   2. 無ければ manifest + lockfile から自動判定:
-      - **Node**: `package.json` の `scripts`、lockfile（`pnpm-lock.yaml`/`package-lock.json`/`yarn.lock`）でパッケージマネージャを判定 → `<pm> run check && <pm> run test`
-      - **Python**: `pyproject.toml`/`setup.cfg` から `ruff check` / `mypy` / `pytest`、`uv.lock` があれば `uv run` 経由
-      - Makefile に `check`/`test` ターゲットがあればそれを使用
-   3. テスト基盤が存在しない場合: 基盤を新設せず、対象モジュールの inline smoke test（`__main__` / `require.main === module`）で検証し、その旨を PR に記載する
+1. **品質チェック実行**: `~/.claude/docs/worktree-tooling.md` §2（check/test 判定の3段フォールバック）に従いコマンドを決めて実行する。
 2. **失敗時**: 直接修正。3回失敗したら人間に報告。
 3. **スモークテスト**: IssueのACまたはTest planから**1つ**コマンドを選んで実行し、期待通りの出力が得られるか確認する。空結果やバリデーションエラーはFAIL扱い。失敗したら修正してから次へ進む。
 4. **差分確認**: `git diff main` で全変更を確認。意図しないファイル（プロジェクトのコミット除外対象等）が混入していないか確認。

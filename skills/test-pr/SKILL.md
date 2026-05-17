@@ -37,9 +37,8 @@ PRのbodyから以下を抽出:
 4. なければ → `gh pr checkout <PR番号>` で切り替え
 
 **worktreeでの実行時の注意**:
-- `pnpm install` は実行しない（メインの `node_modules` シンボリックリンクが壊れる）
-- 代わりにメインの `node_modules` をシンボリックリンクする: `ln -s <main-repo>/node_modules <worktree>/node_modules`
-- これにより `pnpm run check` / `pnpm run test` がそのまま動く
+- 依存セットアップは `~/.claude/docs/worktree-tooling.md` §1 に従う（再 install しない）
+- テスト/型チェックのコマンド判定は同 §2（3段フォールバック）に従う
 
 ---
 
@@ -100,7 +99,7 @@ Agent(
     作業ディレクトリ: <worktreeパスまたはリポジトリルート>
 
     修正後:
-    1. pnpm run check で型チェックを通す
+    1. 型チェックを通す（コマンドは ~/.claude/docs/worktree-tooling.md §2 に従う）
     2. git add <変更ファイル> && git commit で修正をコミット
     3. git push"
 )
