@@ -38,7 +38,17 @@ model: haiku
 
 6. **ローカルのクリーンアップ**
    - worktree環境の場合はすでにメインリポジトリにいるはず。そうでなければ `git checkout main`
-   - `git pull` でmainを最新化
+   - main を最新化する。**必ず fast-forward 限定で行う**:
+     ```bash
+     git fetch origin && git merge --ff-only origin/main
+     ```
+   - **🚫 絶対禁止**: `git reset --hard` / `git checkout -f` / `git stash` / `git clean` で
+     divergent や "would be overwritten" を解消しないこと。メインの作業ツリーには
+     **未コミットの生成データ（`data/*.csv` 等）が存在しうる**。これらは追跡ファイルなので
+     hard reset 等で**復元不能に消失**する（過去に実害発生済み）。
+   - `git merge --ff-only` が **fast-forward 不可で失敗**した場合:
+     → そこで**停止し、人間に報告する**。自動で破壊的同期を試みない。
+       （ローカル main に未push commitがある／乖離している兆候。手動判断が必要）
    - `git branch -d <ブランチ名>` でローカルブランチ削除（残っている場合）
    - `git push origin --delete <ブランチ名>` でリモートブランチ削除（残っている場合）
 
