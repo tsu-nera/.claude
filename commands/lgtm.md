@@ -35,13 +35,29 @@ model: haiku
 5. **マージ**
    - 常に `gh pr merge <PR番号> --merge` を使う（`--delete-branch` は付けない）
    - 理由: `--delete-branch` はローカルブランチ削除時にworktree残存等で失敗しやすく、マージ自体も巻き添えで失敗する。ブランチ削除は次のステップで明示的に行う
+   - マージ直後に **merge commit oid を取得** する:
+     ```bash
+     MERGE_OID=$(gh pr view <PR番号> --json mergeCommit -q .mergeCommit.oid)
+     echo "merge_oid=$MERGE_OID"
+     ```
+     取得できない場合は2秒待ってリトライ（GitHub 側の反映ラグ対策、最大3回）。
 
 6. **ローカルのクリーンアップ**
    - worktree環境の場合はすでにメインリポジトリにいるはず。そうでなければ `git checkout main`
-   - main を最新化する。**必ず fast-forward 限定で行う**:
+   - main を最新化する。**fetch 後に merge commit が origin/main に含まれるまでポーリング** してから ff-only マージ:
      ```bash
-     git fetch origin && git merge --ff-only origin/main
+     for i in 1 2 3 4 5 6 7 8; do
+       git fetch origin main --quiet
+       if git merge-base --is-ancestor "$MERGE_OID" origin/main 2>/dev/null; then
+         break
+       fi
+       sleep 2
+     done
+     # 最終確認: origin/main に MERGE_OID が含まれていなければ停止して人間に報告
+     git merge-base --is-ancestor "$MERGE_OID" origin/main || { echo "ERROR: $MERGE_OID not in origin/main after 16s"; exit 1; }
+     git merge --ff-only origin/main
      ```
+   - **理由**: `gh pr merge` 直後は GitHub 側 main 反映に遅延があり、即 `git fetch` すると merge 前の origin/main を取って FF 成功しても merge commit を取りこぼす（stale local main）。後続 `/ship` が古い HEAD でビルドして本番に未反映 PR が混入する事故が発生したため、merge commit を明示的に待つ。
    - **🚫 絶対禁止**: `git reset --hard` / `git checkout -f` / `git stash` / `git clean` で
      divergent や "would be overwritten" を解消しないこと。メインの作業ツリーには
      **未コミットの生成データ（`data/*.csv` 等）が存在しうる**。これらは追跡ファイルなので
