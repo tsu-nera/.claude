@@ -44,16 +44,6 @@
         ]
       }
     ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/keyword-notify.sh 'Task completed' 'Claude Code'"
-          }
-        ]
-      }
-    ]
   },
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true,
