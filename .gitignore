@@ -45,3 +45,6 @@ teams/
 
 # プラグイン（自動ダウンロード）
 plugins/
+
+## マシン固有 CLAUDE（各マシンで用意・未コミット）
+CLAUDE.local.md

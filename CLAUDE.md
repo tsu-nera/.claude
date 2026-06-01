@@ -20,3 +20,7 @@
 
 - リファクタリングで不要なコードはコメントアウトやdeprecatedではなく完全に削除
 - コーディング規約: `~/.claude/docs/coding-guidelines.md`
+## マシン固有設定
+<!-- 各マシンの ~/.claude/CLAUDE.local.md を読む。無ければ無視される（検証済み）。
+     相対importはsymlink自身のディレクトリ(=各~/.claude)基準で解決される。 -->
+@CLAUDE.local.md
