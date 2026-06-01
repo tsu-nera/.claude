@@ -180,8 +180,8 @@ worktreeエージェント内でさらに複数のsonnet worktreeサブエージ
 5. **mainとのコンフリクトチェック**:
 ```bash
 git fetch origin main
-# コンフリクト検出
-if git merge-tree $(git merge-base HEAD origin/main) HEAD origin/main | grep -q "<<<<<<"; then
+# コンフリクト検出（merge-tree --write-tree はコンフリクト時に非0で終了する）
+if ! git merge-tree --write-tree origin/main HEAD >/dev/null 2>&1; then
   git merge origin/main  # コンフリクト解消
   # 解消後コミット
 fi
