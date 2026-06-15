@@ -23,6 +23,7 @@
 
 - リファクタリングで不要なコードはコメントアウトやdeprecatedではなく完全に削除
 - コーディング規約: `~/.claude/docs/coding-guidelines.md`
+- スキル（SKILL.md）編集は簡潔第一: agentが導出できる説明（ツール使い方・再掲・逐一ナレーション・issue番号）は書かず、非自明な落とし穴とfragileなcanonicalコマンドだけ残す。新規作成・大幅最適化は `skill-creator` スキルを使う
 ## マシン固有設定
 <!-- 各マシンの ~/.claude/CLAUDE.local.md を読む。無ければ無視される（検証済み）。
      相対importはsymlink自身のディレクトリ(=各~/.claude)基準で解決される。 -->
