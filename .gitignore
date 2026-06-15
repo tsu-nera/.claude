@@ -18,6 +18,7 @@ daemon/
 downloads/
 jobs/
 gh-pr-status-cache.json
+.last-update-result.json
 
 # ログ・デバッグ
 debug/
