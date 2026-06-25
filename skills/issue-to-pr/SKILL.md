@@ -135,6 +135,12 @@ Phase 1-3の結果を踏まえ、**設計に不明点・判断が分かれるポ
 
 ### Phase 4: 実装
 
+**実装手段の選択（起動引数で分岐）:**
+- 引数に `--codex` が含まれる場合 → worktree 内で実装労働を `codex exec` に委譲する（下記「codex モード」）。
+- 含まれない場合（デフォルト） → sonnet が直接実装する。
+
+どちらの場合も **`isolation: "worktree"` のエージェント内で行う**点は共通。Phase 1-3（設計）は親エージェントのまま変わらない。
+
 実装は **`model: "sonnet"`, `isolation: "worktree"` のエージェントにハンドオフ**する。
 **例外なし。** 1行修正でも、6ファイル×1行でも、必ず worktree を使う。
 
@@ -167,6 +173,7 @@ Agent(
 - 「worktree の依存セットアップ・品質チェックは `~/.claude/docs/worktree-tooling.md` §1-2 に従うこと」
 - 「コミット除外対象は `~/.claude/docs/worktree-tooling.md` §3 に従い、`git add` は関連ファイルを明示すること」
 - 「Phase 5-6の手順に従ってコミット・PRを作成すること」
+- `--codex` 指定時のみ: 「実装は Phase 4『codex モード』の手順に従い `codex exec` に委譲すること」
 - 「PR作成時のセッションIDフッターには `$CLAUDE_SESSION_ID` ではなく、この値をそのまま使うこと: `<親セッションの$CLAUDE_SESSION_ID値>`」
 
 **Agentへのpromptに含めてはいけない情報**:
@@ -174,6 +181,36 @@ Agent(
 
 **worktree内で複数ファイルを並列実装する場合（3ファイル超かつ独立分割可能）**:
 worktreeエージェント内でさらに複数のsonnet worktreeサブエージェントを起動してよい。
+
+#### codex モード（`--codex` 指定時のみ）
+
+worktree エージェントは、自分で実装する代わりに `codex exec` に**コード生成だけ**を委譲する。
+git 操作・品質チェック・commit・PR は **codex に任せず worktree エージェント（Claude）が担う**
+（プロジェクト固有規約 — 依存セットアップ・コミット除外・session footer — を codex は知らないため）。
+
+```bash
+codex exec -C <worktree-path> --sandbox workspace-write --skip-git-repo-check \
+  --json -o <worktree-path>/.codex-last-message.txt \
+  "<Phase 3で確定した設計方針の全文 + 変更対象ファイルと修正内容>
+
+制約:
+- pnpm install を実行しないこと（node_modules は main へのシンボリックリンク）
+- コードの変更のみ行うこと。git add / commit / PR 作成はしないこと
+- コメント・ログ・変数名はすべて英語で書くこと" > <worktree-path>/.codex-events.jsonl
+```
+
+`--json` で stdout が JSONL イベント列（`file_change` / `command_execution` / `mcp_tool_call` 等）になり、
+codex が**実際に何のファイルをどう変えたか**を機械的に検収できる。`-o` の最終メッセージは要約用。
+
+実行後、worktree エージェントは:
+1. `.codex-events.jsonl` の `file_change` イベントと `git diff` を突き合わせ、codex の変更が
+   Phase 3 の設計通りか・想定外のファイルを触っていないか検証する。設計と乖離・規約違反
+   （`@ts-ignore`、絵文字、`Number` でのトークン量等）があれば直接修正する。
+2. `.codex-events.jsonl` / `.codex-last-message.txt` は作業ファイルなのでコミット前に削除する。
+3. そのまま Phase 5（品質チェック）以降を通常通り実行する。
+
+codex の挙動が設計と大きく食い違う場合は、もう一度 `codex exec resume --last` で指示を補足するか、
+worktree エージェントが直接修正する。3回試して収束しなければ人間に報告する。
 
 ---
 
