@@ -131,6 +131,19 @@ python3 -c "import json;print(list(json.load(open('$HOME/.claude.json')).get('mc
 
 5. 上記が成功するなら Claude Code を再起動 (`/exit` → `claude`)
 
+### "Failed to connect" の頻出原因: npx cache の bin に実行権限が無い
+
+`claude mcp list` で chrome-devtools/chrome-gui が `✘ Failed to connect`、手動起動で
+`.../node_modules/.bin/chrome-devtools-mcp: 許可がありません` (permission denied) が出る場合、
+npx cache 内の本体 JS に +x が付いていない（公開 tarball の bin が non-exec で展開される）。
+shebang 実行できず接続失敗する。fix:
+
+```bash
+chmod +x ~/.npm/_npx/*/node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js
+```
+
+修正後は Claude Code 再起動が必要（MCP は起動時のみ接続を試みる）。
+
 ## 注意事項
 
 - **Wayland 前提**: `DISPLAY=:1` と `WAYLAND_DISPLAY=wayland-1` が設定されていること（`echo $DISPLAY $WAYLAND_DISPLAY` で確認）
