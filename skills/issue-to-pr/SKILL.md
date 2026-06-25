@@ -139,6 +139,8 @@ Phase 1-3の結果を踏まえ、**設計に不明点・判断が分かれるポ
 - 引数に `--codex` が含まれる場合 → worktree 内で実装労働を `codex exec` に委譲する（下記「codex モード」）。
 - 含まれない場合（デフォルト） → sonnet が直接実装する。
 
+**`--codex` でも小規模（1-2ファイル）は委譲しない。** codex 委譲は設計全文のプロンプト構築＋ JSONL/diff 検収のオーバーヘッドを伴うため、変更が小さいと「自分で書く」より高くつく。小規模では `--codex` 指定でも sonnet 直接実装にフォールバックする（worktree 隔離はそのまま）。
+
 どちらの場合も **`isolation: "worktree"` のエージェント内で行う**点は共通。Phase 1-3（設計）は親エージェントのまま変わらない。
 
 実装は **`model: "sonnet"`, `isolation: "worktree"` のエージェントにハンドオフ**する。
@@ -189,23 +191,33 @@ git 操作・品質チェック・commit・PR は **codex に任せず worktree 
 （プロジェクト固有規約 — 依存セットアップ・コミット除外・session footer — を codex は知らないため）。
 
 ```bash
-codex exec -C <worktree-path> --sandbox workspace-write --skip-git-repo-check \
+codex exec -C <worktree-path> --sandbox workspace-write \
   --json -o <worktree-path>/.codex-last-message.txt \
   "<Phase 3で確定した設計方針の全文 + 変更対象ファイルと修正内容>
 
 制約:
 - pnpm install を実行しないこと（node_modules は main へのシンボリックリンク）
 - コードの変更のみ行うこと。git add / commit / PR 作成はしないこと
-- コメント・ログ・変数名はすべて英語で書くこと" > <worktree-path>/.codex-events.jsonl
+- コメント・ログ・変数名はすべて英語で書くこと" < /dev/null > <worktree-path>/.codex-events.jsonl
 ```
 
-`--json` で stdout が JSONL イベント列（`file_change` / `command_execution` / `mcp_tool_call` 等）になり、
-codex が**実際に何のファイルをどう変えたか**を機械的に検収できる。`-o` の最終メッセージは要約用。
+`--json` の stdout は thread/turn/item エンベロープの JSONL（`thread.started` → `turn.*` → `item.*`）。
+`-o` の最終メッセージは要約用。`< /dev/null` で stdin ブロックを防ぐ。
+
+**検収の根拠は `git diff` 一本。** codex は `printf ... >> file` のような shell コマンドでファイルを
+編集することがあり、その場合 `item.type=="file_change"` は出ず `command_execution` として記録される。
+JSONL を「何が変わったか」の根拠にすると取りこぼす。JSONL は「codex がどんな**コマンド/ツール**を
+実行したか」（想定外の副作用: install・build・ネットワーク・worktree 外への書き込み）の確認専用。
+全文を読まず jq で絞る:
+```bash
+jq -rc 'select(.type=="item.completed") | .item | select(.type=="command_execution") | .command' \
+  <worktree-path>/.codex-events.jsonl
+```
 
 実行後、worktree エージェントは:
-1. `.codex-events.jsonl` の `file_change` イベントと `git diff` を突き合わせ、codex の変更が
-   Phase 3 の設計通りか・想定外のファイルを触っていないか検証する。設計と乖離・規約違反
-   （`@ts-ignore`、絵文字、`Number` でのトークン量等）があれば直接修正する。
+1. `git diff` を Phase 3 の設計と突き合わせ、設計通りか・想定外のファイルを触っていないか検証する。
+   設計と乖離・規約違反（`@ts-ignore`、絵文字、`Number` でのトークン量等）があれば直接修正する。
+   上記 jq で codex の実行コマンドに想定外の副作用がないかも確認する。
 2. `.codex-events.jsonl` / `.codex-last-message.txt` は作業ファイルなのでコミット前に削除する。
 3. そのまま Phase 5（品質チェック）以降を通常通り実行する。
 
