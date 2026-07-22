@@ -2,7 +2,7 @@
 name: research
 description: 指定トピックをWebSearchで調査し、要点を日本語でまとめる。「調査して」「調べて」で起動。--google で gemini-cli 使用。
 user-invocable: true
-allowed-tools: Agent, WebSearch, Bash(gemini*), WebFetch
+allowed-tools: Agent, WebSearch, Bash(gemini*), Bash(python3 ~/.claude/skills/research/scripts/*), WebFetch, Read
 ---
 
 # リサーチスキル
@@ -23,6 +23,19 @@ allowed-tools: Agent, WebSearch, Bash(gemini*), WebFetch
 - 概要・基本情報
 - メリット・デメリット / 賛否
 - 実践例・ベストプラクティス
+
+### Step 1.5: ソース選択
+
+Web だけで足りない場合、用途に応じて adapter を併用する。
+
+| 用途 | ソース |
+|---|---|
+| 実装手順・エラー解決・日本語の詰まりどころ | Qiita → `references/qiita.md` |
+| 障害・サービス状況・速報 | X → `x-research` スキルに委譲 |
+| それ以外 | Web（Step 2） |
+
+adapter を使う前に、対応する reference を Read してクエリ構文と落とし穴を確認すること。
+出力は JSONL 共通スキーマ（`source/title/url/author/published_at/engagement/snippet`）。
 
 ### Step 2: 並列調査
 
