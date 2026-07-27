@@ -22,8 +22,8 @@ Issue が複雑でも `/issue-to-merge` を使ってよい。複雑さは停止�
 
 ## 設計判断の扱い（最重要）
 
-`/issue-to-pr` は設計に不明点があると AskUserQuestion で人間に聞こうとする。
-このスキルの配下では、**その設計質問を人間に上げず、自分（Opus）が設計判断を下して続行する。**
+`/issue-to-pr` は Issue が低品質な場合（Phase 1）と設計に不明点がある場合（Phase 3.5）に AskUserQuestion を出す。
+このスキルの配下では **`--autonomous` を付けて起動し、その2つの質問を人間に上げず自分（Opus）が判断して続行する。**
 実装方式・影響範囲・既存パターンとの差異などは、すべて自分で調査して決める。
 
 **人間にエスカレーションするのは次の2つだけ:**
@@ -36,9 +36,8 @@ Issue が複雑でも `/issue-to-merge` を使ってよい。複雑さは停止�
 
 ### Phase 1: PR作成
 
-`/issue-to-pr <issue番号>` を Skill ツールで起動する。
+`/issue-to-pr <issue番号> --autonomous` を Skill ツールで起動する。
 
-- 設計判断を問う AskUserQuestion が出そうになったら → **発火させず自分で決めて続行**
 - `SPLIT_NEEDED` の報告 → このスキルを中断し、分割案を人間に提示して指示を待つ
 - PR作成成功 → PR番号を取得して Phase 2 へ
 
