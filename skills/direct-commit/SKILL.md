@@ -9,7 +9,8 @@ user-invocable: true
 PRを経由せず main へ直接 commit + push する**薄いオーケストレーター**。
 プロジェクト CLAUDE.md「main 直コミット運用」節で定められた変更が対象。
 
-`src/` `config/` を含む場合は **`pnpm run check`（型チェック）必須**。
+`src/` `config/` を含む場合は **型チェック必須**（コマンドは
+`~/.claude/docs/worktree-tooling.md` §2 の3段フォールバックで判定）。
 設計判断・依存変更・広範なロジック変更は使わず `/pr-merge` / `/pr` を使うこと。
 
 ## 使い方
@@ -25,7 +26,7 @@ PRを経由せず main へ直接 commit + push する**薄いオーケストレ�
 
 **使うべきでない**:
 - 設計判断・複数アプローチの検討が必要 → `/pr` で人間判断を仰ぐ
-- `package.json` `pnpm-lock.yaml` `tsconfig*` 等の依存・ビルド構成変更 → `/pr-merge`
+- 依存・ビルド構成変更（manifest / lockfile / ビルド設定）→ `/pr-merge`
 - ロジックが広範囲に及ぶ／テストを伴うべき変更 → `/pr-merge`
 
 ## Instructions for Claude:
@@ -45,16 +46,15 @@ git diff --stat
     → 型チェック不要、Phase 1 へ
   - `src/` `config/` を含むが**「簡単な修正」**（typo/ログ文言/軽微な定数・bug fix、
     テスト/レビュー無しで自信を持てる小規模変更）→ Phase 0.5（型チェック）必須
-  - `package.json` `pnpm-lock.yaml` `tsconfig*` 等の依存・ビルド構成変更が含まれる
+  - 依存・ビルド構成変更（manifest / lockfile / ビルド設定）が含まれる
     → **停止**し `/pr-merge` の使用を提案
   - 設計判断・複数アプローチ検討・広範なロジック変更 → **停止**し `/pr-merge` / `/pr`
   - 「簡単な修正」か迷う → 停止してユーザーに確認
 
 ### Phase 0.5: 型チェック（`src/` `config/` を含む場合のみ）
 
-```bash
-pnpm run check
-```
+コマンドは `~/.claude/docs/worktree-tooling.md` §2 で判定する。
+型チェッカーが未導入のプロジェクトでは §2-3 に従い、代わりにテストで検証してその旨を報告する。
 
 - 失敗 → 停止してユーザーに報告（直コミットは中止）
 - 成功 → Phase 1 へ
