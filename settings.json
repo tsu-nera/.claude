@@ -6,33 +6,19 @@
   "permissions": {
     "defaultMode": "auto"
   },
+  "model": "opus[1m]",
+  "includeCoAuthoredBy": false,
+  "skillOverrides": {
+    "post-plan-to-issue": "off",
+    "update-issue": "off"
+  },
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/capture-session-id.sh"
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "~/.claude/hooks/capture-message.sh"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/inject-session-id.sh"
           }
         ]
       }
@@ -55,9 +41,9 @@
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true,
     "skill-creator@claude-plugins-official": true,
-    "feature-dev@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": false,
     "claude-code-setup@claude-plugins-official": true,
-    "clangd-lsp@claude-plugins-official": true
+    "clangd-lsp@claude-plugins-official": false
   },
   "alwaysThinkingEnabled": true,
   "effortLevel": "medium",
@@ -71,5 +57,6 @@
   "voiceEnabled": true,
   "feedbackSurveyState": {
     "lastShownTime": 1754039946567
-  }
+  },
+  "autoUpdates": false
 }

@@ -3,11 +3,6 @@
 - SSH接続が失敗した場合は、数秒待ってからリトライすること（一時的なネットワーク障害の可能性がある）
 
 ## Development Tips
-- `gh issue create` / `gh issue comment` / `gh pr create` の本文末尾には必ずセッションIDフッターを付与すること:
-  ```
-  ---
-  🤖 Claude Code session: `$CLAUDE_SESSION_ID`
-  ```
 - 「動作確認した」は実行コマンドと出力の貼付とセットでのみ書く。テスト・型チェックが失敗したらログを省略せずそのまま出す
 
 ## Communication Strategy

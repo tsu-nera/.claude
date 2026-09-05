@@ -34,10 +34,6 @@ When the user says a task is complete or asks to commit and push changes:
    - [bullet point of change 1]
    - [bullet point of change 2] 
    - [bullet point of change 3]
-   
-   🤖 Generated with [Claude Code](https://claude.ai/code)
-   
-   Co-Authored-By: Claude <noreply@anthropic.com>
    ```
 5. Push the commit using `git push`
 6. Confirm completion with commit hash and branch info

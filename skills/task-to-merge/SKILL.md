@@ -60,8 +60,6 @@ worktree起動が失敗しても直接ブランチ作業に fallback せず、wo
 - 「実装後、`~/.claude/docs/worktree-tooling.md` §2 で判定した品質チェックを通してから commit すること。
   通らなければ自力修正（最大3回）、不能なら commit せず正確に報告して停止すること」
 - 「commit メッセージは Conventional Commits、PR タイトル・本文は日本語、本文に Test plan を含めること」
-- 「PR本文末尾のセッションIDフッターには `$CLAUDE_SESSION_ID` ではなく、この値をそのまま使うこと:
-  `<親セッションの $CLAUDE_SESSION_ID 値>`」（子エージェントのenvは別物になり得るため値を直接渡す）
 
 エージェントには **PR番号・ブランチ名・変更ファイル一覧・型チェック結果・worktreeパス** を
 構造化して返させる。型チェック不能で停止した報告が返ったら、このスキルも中断して人間に報告（mergeしない）。

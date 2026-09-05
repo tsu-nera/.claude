@@ -114,17 +114,8 @@ plan ファイルの内容を以下の形式でコメント用に整形する:
 
 ### Step 5: コメントの投稿
 
-コメントの末尾に Claude Code セッションID を付与する。`$CLAUDE_SESSION_ID` が設定されている場合はそれを使用し、未設定の場合はセクションを省略する。
-
 ```bash
 gh issue comment <issue-number> --repo <repo> --body "<整形したコメント>"
-```
-
-コメントのフッターに以下を追加（`$CLAUDE_SESSION_ID` が設定されている場合のみ）:
-
-```markdown
----
-🤖 Claude Code session: `<CLAUDE_SESSION_ID>`
 ```
 
 ### Step 6: `claude-planned` ラベルの付与

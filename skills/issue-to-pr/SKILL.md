@@ -183,7 +183,6 @@ Agent(
 - 「コミット除外対象は `~/.claude/docs/worktree-tooling.md` §3 に従い、`git add` は関連ファイルを明示すること」
 - 「Phase 5-6の手順に従ってコミット・PRを作成すること」
 - `--codex` 指定時のみ: 「実装は Phase 4『codex モード』の手順に従い `codex exec` に委譲すること」
-- 「PR作成時のセッションIDフッターには `$CLAUDE_SESSION_ID` ではなく、この値をそのまま使うこと: `<親セッションの$CLAUDE_SESSION_ID値>`」
 
 **Agentへのpromptに含めてはいけない情報**:
 - 曖昧な指示（「適切に修正して」）
@@ -263,8 +262,6 @@ git commit -m "$(cat <<'EOF'
 <type>: <概要>
 
 Closes #<issue番号>
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -283,10 +280,7 @@ Closes #<issue番号>
 - [ ] <具体的な実行コマンドと期待結果>
 - [ ] <回帰確認: 既存機能への影響がないこと>
 EOF
-)
-
----
-\`🤖 Claude Code session: <親セッションの$CLAUDE_SESSION_ID値をここに埋め込む>\`"
+)"
 ```
 
 ---
