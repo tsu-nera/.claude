@@ -3,11 +3,11 @@
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
+  "includeCoAuthoredBy": false,
   "permissions": {
     "defaultMode": "auto"
   },
   "model": "opus[1m]",
-  "includeCoAuthoredBy": false,
   "skillOverrides": {
     "post-plan-to-issue": "off",
     "update-issue": "off"
@@ -45,6 +45,7 @@
     "claude-code-setup@claude-plugins-official": true,
     "clangd-lsp@claude-plugins-official": false
   },
+  "feedbackDrafts": "off",
   "alwaysThinkingEnabled": true,
   "effortLevel": "medium",
   "voice": {
