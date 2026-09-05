@@ -31,6 +31,7 @@ Web だけで足りない場合、用途に応じて adapter を併用する。
 | 用途 | ソース |
 |---|---|
 | 実装手順・エラー解決・日本語の詰まりどころ | Qiita → `references/qiita.md` |
+| 個人開発・検証記事・書籍紹介（いいね順で定番が拾える） | Zenn → `references/zenn.md` |
 | 障害・サービス状況・速報 | X → `x-research` スキルに委譲 |
 | それ以外 | Web（Step 2） |
 

@@ -13,6 +13,10 @@ allowed-tools: Bash(gh *), Read, Grep, Glob
 **このスキルの目的: `/issue-to-pr`（または codex の issue-to-pr）がそのまま自走できる粒度・format で Issue を作る。**
 作成した Issue は下流で「高品質（一気通貫で進む）」と判定され、人間への差し戻しが発生しないことをゴールとする。
 
+codex は focused test + typecheck + full validation（1回）が通れば PR 作成まで自走し、
+stop condition（live smoke / RPC / 外部API / market data 調査が主作業化・product decision 化・
+受入条件と現行コードの衝突）に当たると handoff する。**Issue はこの stop condition を踏まない形で書くのが高品質。**
+
 ## 設計の丁寧さ: 最も context が乏しい実装者に合わせる
 
 同じ Issue が2経路で実装され、前提が大きく違う。**作成時点でどちらか確定しないことが多いので、乏しい側（codex 直接）を基準に書く。**
@@ -91,11 +95,23 @@ bodyのフォーマット:
 
 - [ ] （検証可能な完了条件）
 - [ ] （回帰確認: 既存機能への影響がないこと）
+
+## 検証（任意・codex スコープ外）
+
+（live smoke / RPC / 外部API / market data 等、merge 後に Claude / 人間側で行う検証があればここに分離する）
 ```
 
 各セクションの必須度:
 - **変更対象**・**Acceptance Criteria** は必須。空・曖昧だと下流で差し戻される。
 - **方針** はアプローチが自明な小規模変更なら簡潔で可。複数アプローチがあるなら採用案と理由を明記する。
+  実装中に product/spec 判断が発生する余地を残さない（未確定の判断があるなら Issue 化前にユーザーと確定させる）。
+
+Acceptance Criteria の検証可能性（codex stop condition との整合）:
+- AC は **focused unit/regression test か typecheck で検証できる形**で書く
+- live smoke・外部データ調査が必要な検証は blocking AC に混ぜず「## 検証」セクションへ分離する。
+  codex が AC を literally 追って deep troubleshooting（LayerZeroScan / onchain receipt / market data 調査等）に
+  滑り込むのを Issue 文面で防ぐ（#2038 の教訓）
+- AC が現行コード / registry / data の実態と衝突しないか Step 1 の探索で確認する（衝突は codex の即 handoff トリガー）
 
 ### Step 4: Issue作成
 
