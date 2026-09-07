@@ -1,124 +1,68 @@
 ---
 name: create-issue
-description: 会話で決めた内容からGitHub Issueを作成する。「イシューをあげて」「issueにして」で起動。
+description: 会話の内容から GitHub Issue を作成する。「issue立てて」「issueにして」「とりあえずissue立てておいて」で起動。ready（実装者に渡す粒度）と draft（あとで詰める）の2モード。
 user-invocable: true
-disable-model-invocation: true
-allowed-tools: Bash(gh *), Read, Grep, Glob
+allowed-tools: Bash, Read, Grep, Glob
 ---
 
 # Issue作成スキル
 
-会話コンテキストからGitHub Issueを作成する。
+**Issue 作成の唯一の入口。** 生 `gh issue create` は hook で deny される。
 
-**このスキルの目的: `/issue-to-pr`（または codex の issue-to-pr）がそのまま自走できる粒度・format で Issue を作る。**
-作成した Issue は下流で「高品質（一気通貫で進む）」と判定され、人間への差し戻しが発生しないことをゴールとする。
+## Step 0: モード判定（最初にこれだけ決める）
 
-codex は focused test + typecheck + full validation（1回）が通れば PR 作成まで自走し、
-stop condition（live smoke / RPC / 外部API / market data 調査が主作業化・product decision 化・
-受入条件と現行コードの衝突）に当たると handoff する。**Issue はこの stop condition を踏まない形で書くのが高品質。**
+ユーザーの語で決め打ちする。意味を推測しない。
 
-## 設計の丁寧さ: 最も context が乏しい実装者に合わせる
+- 「issue立てて」「issueにして」「起票して」 → **ready**
+- 「とりあえず」「あとで」「忘れないうちに」「メモ」を含む → **draft**
+- **迷ったら draft**（draft を後で ready に昇格させるのは安い。逆は無人実行で壊れる）
 
-同じ Issue が2経路で実装され、前提が大きく違う。**作成時点でどちらか確定しないことが多いので、乏しい側（codex 直接）を基準に書く。**
+`--mode` が明示指定されていればそれに従う。
 
-- **Claude `/issue-to-pr`**: 同セッションの会話を持ち、Phase 2/3 で再調査・再設計する。Issue 設計はアンカーで、過不足は Phase 3.5 で自己補正される。
-- **codex CLI を Issue に直接当てる**: **Issue が唯一の入力**。会話なし・再設計なし・規約知識が弱い。設計の過不足はそのまま drift する。
-  （注: `issue-to-pr --codex` 経由なら Claude が再設計した方針を codex に渡すのでこのケースに当たらない。該当するのは codex を Issue へ直接当てる運用のみ）
+---
 
-書き分けの基準:
-- **常に厚く**: WHAT / WHY / 制約 / Acceptance Criteria / 変更対象ファイル（具体パス） / 方針（アプローチレベル — どの既存パターン・ユーティリティに寄せるか）。
-- **書きすぎ厳禁**: 確信のない行レベルのコードスケッチ。codex は Issue を literally 追うため、誤ったコード例は「例なし」より有害。**確定した判断だけ書き、推測コードは書かない。**
+## draft モード
 
-なお、コーディング規約（コメント英語・`Number` 禁止 等）は Issue 本文に書かない。実装側（Claude / codex）がそれぞれ自分の環境で規約を保持する前提とする。
+目的は「**後で自分が再現できること**」だけ。実装者に渡す前提が無いので、Acceptance Criteria も実装方針も書かない。
+探索（Grep/Read）もしない。会話に出ていない情報を調べに行かない。
 
-## 引数パース
+body:
 
-`$ARGUMENTS` から以下を抽出:
-- `--repo=owner/repo`: リポジトリ（省略時は現在のリポジトリ）
-- `--label=<label>`: ラベル（省略時はなし、複数指定可）
-- それ以外のテキスト: Issueの内容に関する補足
-
-リポジトリが省略された場合:
-```bash
-gh repo view --json nameWithOwner -q .nameWithOwner
-```
-
-## コンテキスト
-
-- 変更ファイル: !`git diff --name-only`
-- 最近のコミット: !`git log --oneline -5`
-
-## 実行手順
-
-### Step 1: 変更対象の特定
-
-会話で変更対象ファイルが具体的に特定済みなら、それを使う。
-**未特定なら `Grep`/`Glob`/`Read` でコードベースを探索し、具体的なパスまで落とし込む。**
-（曖昧な「変更対象」欄は下流で低品質判定 → 調査やり直しの原因になる。ここで前倒しする）
-
-### Step 2: スコープ判定（1 PR で完結するか）
-
-`issue-to-pr` は「独立して merge・レビューできる成果物が複数に分かれる規模」を `SPLIT_NEEDED` として人間に差し戻す。
-**それを未然に防ぐため、Issue 作成前にスコープを判定する。**
-
-- **1 PR で完結する規模** → Step 3 へ。
-- **複数 PR に割るべき規模** → 単一 Issue を作らず、分割を提案する:
-  - 親子関係が要るなら `create-subissue` を案内
-  - 1つの大きな塊を割るなら `split-issue` を案内
-  - どう割るか（境界）の案を添えてユーザーに確認する。
-
-### Step 3: Issue内容の生成
-
-会話の流れと Step 1 の探索結果から生成する。
-**format は `issue-to-pr` の品質判定3軸（変更ファイルの具体列挙 / Acceptance Criteria / 設計方針）に1対1で対応させる。**
-
-- **タイトル**: 簡潔に要点をまとめる
-- **body**: 下記フォーマット
-
-bodyのフォーマット:
 ```markdown
-## 背景 / 目的
+## 現象 / 気になったこと
 
-（会話で議論した背景・動機・なぜやるか）
+（1-3行）
 
-## 変更対象
+## 出典
 
-- `src/xxx/foo.ts`: （何をどう変えるか）
-- `config/bar.ts`: （同上）
+- `src/xxx/foo.ts:123`（会話で見た具体的な箇所。無ければ issue 番号 / ログ / コマンド）
 
-## 方針
+## なぜ気になったか
 
-（実装アプローチをアプローチレベルで書く。寄せる既存パターン・ユーティリティを名指しする。
-確信のない行レベルのコード例は書かない）
-
-## Acceptance Criteria
-
-- [ ] （検証可能な完了条件）
-- [ ] （回帰確認: 既存機能への影響がないこと）
-
-## 検証（任意・codex スコープ外）
-
-（live smoke / RPC / 外部API / market data 等、merge 後に Claude / 人間側で行う検証があればここに分離する）
+（1-2行。後で読む自分が「で、何が問題なんだっけ」にならないように）
 ```
 
-各セクションの必須度:
-- **変更対象**・**Acceptance Criteria** は必須。空・曖昧だと下流で差し戻される。
-- **方針** はアプローチが自明な小規模変更なら簡潔で可。複数アプローチがあるなら採用案と理由を明記する。
-  実装中に product/spec 判断が発生する余地を残さない（未確定の判断があるなら Issue 化前にユーザーと確定させる）。
-
-Acceptance Criteria の検証可能性（codex stop condition との整合）:
-- AC は **focused unit/regression test か typecheck で検証できる形**で書く
-- live smoke・外部データ調査が必要な検証は blocking AC に混ぜず「## 検証」セクションへ分離する。
-  codex が AC を literally 追って deep troubleshooting（LayerZeroScan / onchain receipt / market data 調査等）に
-  滑り込むのを Issue 文面で防ぐ（#2038 の教訓）
-- AC が現行コード / registry / data の実態と衝突しないか Step 1 の探索で確認する（衝突は codex の即 handoff トリガー）
-
-### Step 4: Issue作成
+作成:
 
 ```bash
-gh issue create --repo <REPO> --title "<タイトル>" --body "<body>" [--label "<label>"]
+~/.claude/bin/create-issue.sh --mode draft --repo <REPO> --title "<タイトル>" --body-file <path> --label inbox
 ```
 
-### Step 5: 完了報告
+`inbox`（未トリアージ・週次棚卸し）が必ず付く。type ラベルは付けない（まだ分類しない）。
 
-作成したIssueのURLを報告する。`/issue-to-pr <番号>` で着手できる旨を添える。
+---
+
+## ready モード
+
+**`references/ready.md` を読んでから書く。** ここで初めて doctrine（下流の `issue-to-pr` / codex が自走できる
+粒度・format・stop condition 回避）と `autopilot` 判定が必要になる。
+
+---
+
+## 引数
+
+`$ARGUMENTS` から抽出:
+- `--repo=owner/repo`（省略時は `gh repo view --json nameWithOwner -q .nameWithOwner`）
+- `--mode=ready|draft`（省略時は Step 0 で判定）
+- `--label=<label>`（複数可）
+- それ以外のテキスト: Issue 内容の補足
