@@ -154,8 +154,8 @@ cmd_add() {
   local name=${1:?usage: autopilot add <repo> <issue#|prompt> [--urgent]} what=${2:?usage: autopilot add <repo> <issue#|prompt> [--urgent]}
   local dir st; dir=$(repo_dir "$name"); st=$(repo_state "$name")
   if [[ $what =~ ^#?[0-9]+$ ]]; then
-    local labels=(--add-label autopilot); [[ ${3:-} == --urgent ]] && labels+=(--add-label urgent)
-    (cd "$dir" && gh issue edit "${what#\#}" "${labels[@]}") >/dev/null && echo "labeled #${what#\#}: ${labels[*]//--add-label /}"
+    local labels=autopilot; [[ ${3:-} == --urgent ]] && labels+=,urgent
+    (cd "$dir" && gh issue edit "${what#\#}" --add-label "$labels") >/dev/null && echo "labeled #${what#\#}: $labels"
   else
     local id; id=$(date +%Y%m%d-%H%M%S)
     printf '%s\n' "$what" >"$st/queue/$id.prompt"
