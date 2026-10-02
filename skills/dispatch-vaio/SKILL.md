@@ -1,11 +1,11 @@
 ---
 name: dispatch-vaio
-description: 対話なしで完結する仕事を自宅サーバ vaio に投げるか mouse（このPC）で回すかを決め、投げる場合は claude -p で vaio に投入する。ready Issue の /issue-to-pr・/issue-to-merge、autopilot の金曜バッチ、「vaioで」「vaioに投げて」と言われた時、mouse の負荷を逃がしたい時に使う。
+description: 対話なしで完結する仕事を自宅サーバ vaio に投げるか mouse（このPC）で回すかを決め、投げる場合は vaio の background セッション（Remote Control 付き）に投入する。ready Issue の /issue-to-pr・/issue-to-merge、autopilot の金曜バッチ、「vaioで」「vaioに投げて」と言われた時、mouse の負荷を逃がしたい時に使う。
 ---
 
 # dispatch-vaio
 
-mouse が唯一の対話・memory 書き込み拠点で、vaio は投げられた仕事を `claude -p` で黙って処理する worker。
+mouse が唯一の対話・memory 書き込み拠点で、vaio は投げられた仕事を background セッションで処理する worker。詰まったらスマホや claude.ai/code から答えられる。
 
 ## 振り分け
 
