@@ -124,8 +124,7 @@ cmd_loop() {
     rm -f "$st/running"
     if [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); then
       echo "$(now) HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
-      claude logs "$id" 2>&1 | tail -5 | sed 's/^/    /'
-      echo "    answer with: claude attach $id   then: autopilot start $name"
+      echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
       break
     fi
   done
