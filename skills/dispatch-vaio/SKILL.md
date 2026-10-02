@@ -21,11 +21,18 @@ mouse が唯一の対話・memory 書き込み拠点で、vaio は投げられ�
 vaio は同時1本（4スレッド・RAM 7.6GB で tsc が 1.8GB 食う）。埋まっていれば急ぎなら mouse、でなければ空くまで待つ。
 ユーザーが「mouse で」「vaio で」と言えばそれに従う。行き先は投げた後に1行で報告する。
 
+## 空き確認
+
+`dispatch.sh res` で両機の load / 空きメモリ / swap / claude 本数 / tsc・vitest 本数を1行ずつ出す。
+見るべきは本数ではなく重いジョブ: agent 本体は1本 約300MB・CPU 約5% だが、tsc は peak 1.8GB（vaio で40秒）、vitest は全コアを使う。
+mouse は外では power-saver（turbo off）なので、CPU は数字ほど余っていない。
+
 ## 投入
 
 ```bash
 ~/.claude/skills/dispatch-vaio/scripts/dispatch.sh run ~/repo/xchain-arb "/issue-to-pr 3981"
 ~/.claude/skills/dispatch-vaio/scripts/dispatch.sh status
+~/.claude/skills/dispatch-vaio/scripts/dispatch.sh res
 ```
 
 script が memory の一方向同期（mouse→vaio, `--delete`）→ vaio の `~/.claude` と repo の `pull --ff-only` → tmux 内で `claude -p` まで行う。

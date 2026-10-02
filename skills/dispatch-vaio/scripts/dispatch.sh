@@ -3,6 +3,7 @@
 #   dispatch.sh run <repo-path> <prompt>   e.g. dispatch.sh run ~/repo/xchain-arb "/issue-to-pr 3981"
 #   dispatch.sh status                      running jobs + last log lines
 #   dispatch.sh log <job>                   follow a job's log
+#   dispatch.sh res                         load / memory / agent count on mouse and vaio
 set -euo pipefail
 
 HOST=vaio
@@ -42,9 +43,24 @@ cmd_run() {
   echo "$job started on $HOST (log: $LOG_DIR/$job.log)"
 }
 
+# One line per host so mouse and vaio compare at a glance. Bracketed patterns keep pgrep from matching this probe itself.
+read -r -d '' RES_PROBE <<'PROBE' || true
+read -r _ mt _ <<<"$(free -g | grep Mem)"; ma=$(free -g | awk '/Mem/{print $7}'); sw=$(free -g | awk '/Swap/{print $3}')
+printf '%-8s load %s/%s  mem avail %sG/%sG  swap %sG  claude %s  heavy(tsc/vitest) %s\n' \
+  "$(hostname -s | cut -c1-8)" "$(cut -d' ' -f1 /proc/loadavg)" "$(nproc)" "$ma" "$mt" "$sw" \
+  "$(pgrep -cx claude)" "$(pgrep -cf '[t]sc |[v]itest')"
+PROBE
+
+cmd_res() {
+  bash <<<"$RES_PROBE"
+  ssh "$HOST" bash <<<"$RES_PROBE"
+  echo "vaio jobs: $(running_jobs | tr '\n' ' ')"
+}
+
 case "${1:-}" in
   run) shift; [[ $# -eq 2 ]] || { echo "usage: dispatch.sh run <repo-path> <prompt>" >&2; exit 1; }; cmd_run "$@" ;;
   status) cmd_status ;;
+  res) cmd_res ;;
   log) ssh -t "$HOST" "tail -f $LOG_DIR/$2.log" ;;
-  *) sed -n '2,6p' "$0"; exit 1 ;;
+  *) sed -n "2,7p" "$0"; exit 1 ;;
 esac
