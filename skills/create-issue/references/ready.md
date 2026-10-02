@@ -100,7 +100,7 @@ Acceptance Criteria の検証可能性（codex stop condition との整合）:
 
 ### Step 4: autopilot 判定
 
-**金曜バッチ（週の枠が余った時に無人で消化するキュー）に入れてよいかを判定する。** 条件は2つだけ:
+**無人で自走させてよいか（dispatch-vaio の drain が拾うキューに入れてよいか）を判定する。** 条件は2つだけ:
 
 - **blocker が無い**（依存 Issue が未 merge なら付けない。前提が merge された時点で付ける）
 - **検証がローカルで閉じる**（実弾・サーバ deploy・課金 API・market data 調査を必要としない）
@@ -112,12 +112,14 @@ Acceptance Criteria の検証可能性（codex stop condition との整合）:
 例: `autopilot: 見送り（#3489 の merge 待ち）` / `autopilot: 対象（blocker 無し・型チェックで担保）`
 
 不変条件: **`autopilot` が付いている = キューから任意の順で取り出して回せる**。
-これが崩れると金曜の並列 worktree 実行が壊れるので、blocker 条件は必ず守ること。
+これが崩れると drain の並列 worktree 実行が壊れるので、blocker 条件は必ず守ること。
+
+ユーザーが「急ぎ」と言った場合だけ `--label urgent` も足す（drain が先に取る）。推測では付けない。`urgent` は `autopilot` とセットでのみ意味を持つ。
 
 ### Step 5: Issue作成
 
 ```bash
-~/.claude/bin/create-issue.sh --mode ready --repo <REPO> --title "<タイトル>" --body-file <path> --label <type> [--label autopilot]
+~/.claude/bin/create-issue.sh --mode ready --repo <REPO> --title "<タイトル>" --body-file <path> --label <type> [--label autopilot] [--label urgent]
 ```
 
 生 `gh issue create` は hook で deny される。`--body-file` 必須（本文をコマンドラインに埋めない）。

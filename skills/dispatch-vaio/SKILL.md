@@ -10,7 +10,7 @@ mouse が唯一の対話・memory 書き込み拠点で、vaio は投げられ�
 ## 振り分け
 
 **vaio**: 対話なしで最後まで終わる仕事
-- ready Issue の `/issue-to-pr` / `/issue-to-merge`、`autopilot` の消化
+- ready Issue の `/issue-to-pr` / `/issue-to-merge`、`autopilot` の消化（drain）
 - 単発の起票・docs 更新
 
 **mouse**: 判断を挟む仕事と、お金・サーバに触る仕事
@@ -36,7 +36,10 @@ mouse は外では power-saver（turbo off）なので、CPU は数字ほど余�
 S=~/.claude/skills/dispatch-vaio/scripts/dispatch.sh
 $S run ~/repo/<repo> "/issue-to-pr 3981"            # 1本。vaio に空きが無ければ断る
 $S queue ~/repo/<repo> "/issue-to-pr 3980" "/issue-to-pr 3981"   # 空き次第順に（最大2本並走）。出発前に積む用
-$S status    # セッション一覧と Remote Control の URL
+$S drain ~/repo/<repo> --urgent                     # 帰宅後: autopilot+urgent を流し切る
+$S drain ~/repo/<repo> --until 07:00                # 木金の深夜: urgent → 残りの autopilot。期限後は新規起動しない
+$S cancel <tmux-session>    # queue/drain の以後の起動を止める（起動済みセッションは走り続ける）
+$S status    # セッション一覧と Remote Control の URL、queue/drain のログ末尾
 $S clean     # idle の background セッションを止める
 $S res
 ```
@@ -45,6 +48,8 @@ $S res
 `claude --bg --remote-control` で起動する。`-p` ではなく対話セッションなので、判断待ちで止まったら
 `status` の URL（claude.ai/code・スマホアプリ）か vaio で `claude attach <id>` から答えて続けられる。
 
+- drain は起動時点ではなく毎回 GitHub から Issue を取る（ラベルの付け外しがそのまま追加・取消）。linked PR のある Issue は飛ばす。
+  自分の1本が idle になるまで次を起動しないので、上限2本のうち1枠は queue / run 用に空く。既定 skill は `/issue-to-merge`（`--skill` で変更）
 - 終わったセッションも idle で残り1本 約300MB を持つ。PR を確認したら `clean`
 - background セッションは未 trust のディレクトリで起動を拒否する（新しい repo は vaio で一度 `claude` を開いて承認）
 - vaio で走る skill の改訂は、mouse の `~/.claude` を push してからでないと届かない

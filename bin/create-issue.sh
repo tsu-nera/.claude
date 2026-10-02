@@ -34,7 +34,7 @@ else
   grep -q '^## Acceptance Criteria' "$BODY_FILE" || die "ready mode requires a '## Acceptance Criteria' section"
   grep -q '^## 変更対象' "$BODY_FILE" || die "ready mode requires a '## 変更対象' section"
   grep -q '^autopilot:' "$BODY_FILE" || die "ready mode requires an 'autopilot: ...' verdict line (see references/ready.md Step 4)"
-  # autopilot is a scheduling label for the Friday batch: it must never ride on an issue that
+  # autopilot marks an issue the unattended drain may pick in any order: it must never ride on an issue that
   # still names a blocker, or the queue stops being order-independent.
   if has_label autopilot && grep -qiE '(blocker|blocked by|待ち|依存)' "$BODY_FILE"; then
     echo "create-issue.sh: WARNING: --label autopilot on a body mentioning a blocker. Confirm the queue stays order-independent." >&2
