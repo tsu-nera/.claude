@@ -31,8 +31,12 @@ prepare() {
     || { echo "$repo is not trusted on $HOST: run claude there once and accept" >&2; exit 4; }
 }
 
+# Appended to the system prompt rather than the prompt, which must stay a bare /skill invocation.
+# Which operations are dangerous differs per repo, so this only states that nobody is watching and defers to the repo's rules.
+WORKER_NOTE='このセッションは無人の worker で、確認できる人はいない。取り消せない操作や repo の外に影響が残る操作は、repo の規約で人の確認が要るとされているものも含めて、実行せず手前で止めて報告する。PR の作成と push は対象外（実行してよい）。'
+
 launch_cmd() {
-  printf 'cd %q && claude --bg --remote-control %q --permission-mode bypassPermissions %q' "$1" "$2" "$3"
+  printf 'cd %q && claude --bg --remote-control %q --permission-mode bypassPermissions --append-system-prompt %q %q' "$1" "$2" "$WORKER_NOTE" "$3"
 }
 
 cmd_run() {
