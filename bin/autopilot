@@ -35,6 +35,8 @@ MIN_JOB_SECONDS=180
 # At the 5-hour cap the loop waits for the reset; at the weekly cap it stops, since that reset is days out.
 # The weekly cap is the real limit on purpose: unused weekly quota is lost at the reset.
 LIMITS_FILE=${AUTOPILOT_LIMITS_FILE:-$HOME/.cache/claude-rate-limits.json}
+# Discord webhook for job start/finish only (one line each). Kept out of git: anyone holding the URL can post.
+WEBHOOK_FILE=$HOME/.config/autopilot/discord-webhook
 FIVE_HOUR_MAX=90  # default; `start --5h-max` lowers it to leave room for interactive use in the same window
 SEVEN_DAY_MAX=98
 PROJECTS_CONF=$HOME/.claude/skills/autopilot/projects.conf
@@ -46,6 +48,16 @@ SELF=$(realpath "$0")
 WORKER_NOTE='このセッションは無人の worker で、確認できる人はいない。取り消せない操作や repo の外に影響が残る操作は、repo の規約で人の確認が要るとされているものも含めて、実行せず手前で止めて報告する。PR の作成と push は対象外（実行してよい）。'
 
 die() { echo "autopilot: $*" >&2; exit 1; }
+notify() {
+  [[ -s $WEBHOOK_FILE ]] || return 0
+  jq -n --arg c "$1" '{content: $c}' | curl -fsS -m 10 -H 'Content-Type: application/json' -d @- "$(cat "$WEBHOOK_FILE")" >/dev/null \
+    || echo "$(now) warning: discord notify failed" >&2
+}
+# For a finished issue job: whether the issue closed and which PRs it links, e.g. "issue CLOSED, PR #4021".
+issue_outcome() {
+  (cd "$1" && gh issue view "$2" --json state,closedByPullRequestsReferences \
+    -q '"issue \(.state), PR \([.closedByPullRequestsReferences[] | "#\(.number)"] | if length == 0 then "none" else join(",") end)"')
+}
 now() { date +%H:%M; }
 project_names() { grep -v '^\s*#' "$PROJECTS_CONF" | awk 'NF {print $1}'; }
 project_path() { local p; p=$(awk -v n="$1" '$1 == n {print $2}' "$PROJECTS_CONF"); echo "${p/#\~/$HOME}"; }
@@ -175,17 +187,21 @@ cmd_loop() {
     if [[ $kind == prompt ]]; then mkdir -p "$st/done"; mv "$st/queue/$ref.prompt" "$st/done/"; else echo "$ref" >>"$st/taken"; fi
     echo "$kind $ref $id" >"$st/running"
     echo "$(now) $kind $ref launched as $id"
+    notify "[start] ${label:0:80} ($id on $(hostname -s))"
     local started state elapsed; started=$(date +%s)
     # Waiting for our own session keeps each loop to one slot, leaving the other for a second repo's loop.
     while [[ "$(session_field "$id" status)" == busy ]]; do sleep 60; done
     state=$(session_field "$id" state); elapsed=$(( $(date +%s) - started ))
     echo "$(now) $kind $ref $id idle (state: ${state:-gone}, $((elapsed / 60))m)"
     rm -f "$st/running"
+    local outcome=""; [[ $kind == issue ]] && outcome=", $(issue_outcome "$dir" "$ref")"
     if [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); then
       echo "$(now) HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
       echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
+      notify "[HALTED] ${label:0:80}: state ${state:-gone} after $((elapsed / 60))m$outcome. Loop stopped; claude attach $id, then autopilot start $name"
       break
     fi
+    notify "[done] ${label:0:80}: $((elapsed / 60))m$outcome"
   done
   rm -f "$st/running" "$st/loop"
 }
