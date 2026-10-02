@@ -58,7 +58,7 @@ cmd_queue() {
 }
 
 cmd_status() {
-  agents_json | jq -r '.[] | "\(.id // .sessionId[:8])  \(.status)/\(.state // "-")  \(.name)"' | while read -r id rest; do
+  agents_json | jq -r --argjson now "$(date +%s)" '.[] | "\(.id // .sessionId[:8])  \(.status)/\(.state // "-")  \((($now - .startedAt/1000) / 60 | floor))m  \(.name)"' | while read -r id rest; do
     url=$(remote "claude logs $id 2>/dev/null | grep -o 'https://claude.ai/code/session_[A-Za-z0-9]*' | tail -1" || true)
     echo "$id  $rest  ${url:-}"
   done
