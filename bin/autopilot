@@ -27,6 +27,9 @@ fi
 # there is room for one more tsc peak plus the agent.
 MAX_BUSY=2
 MIN_AVAIL_MB=2500
+# A job that goes idle sooner than this, or not in state done, most likely hit the 5-hour limit or an error.
+# Launching the next one would hit the same wall, so the loop halts instead of burning through the queue.
+MIN_JOB_SECONDS=180
 PROJECTS_CONF=$HOME/.claude/skills/autopilot/projects.conf
 STATE=$HOME/.local/state/autopilot
 SELF=$(realpath "$0")
@@ -113,11 +116,18 @@ cmd_loop() {
     if [[ $kind == prompt ]]; then mkdir -p "$st/done"; mv "$st/queue/$ref.prompt" "$st/done/"; else echo "$ref" >>"$st/taken"; fi
     echo "$kind $ref $id" >"$st/running"
     echo "$(now) $kind $ref launched as $id"
+    local started state elapsed; started=$(date +%s)
     # Waiting for our own session keeps each loop to one slot, leaving the other for a second repo's loop.
     while [[ "$(session_field "$id" status)" == busy ]]; do sleep 60; done
-    # A state other than done means it stopped to ask something; it stays open for an answer and the loop moves on.
-    echo "$(now) $kind $ref $id idle (state: $(session_field "$id" state))"
+    state=$(session_field "$id" state); elapsed=$(( $(date +%s) - started ))
+    echo "$(now) $kind $ref $id idle (state: ${state:-gone}, $((elapsed / 60))m)"
     rm -f "$st/running"
+    if [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); then
+      echo "$(now) HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
+      claude logs "$id" 2>&1 | tail -5 | sed 's/^/    /'
+      echo "    answer with: claude attach $id   then: autopilot start $name"
+      break
+    fi
   done
   rm -f "$st/running" "$st/loop"
 }
