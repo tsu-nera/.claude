@@ -29,7 +29,8 @@ autopilot rm xchain-arb 3820                   # ラベルを外す / 積んだ�
 autopilot start all --urgent                   # 帰宅後: 急ぎだけ（all = projects.conf の全プロジェクト）
 autopilot start xchain-arb --until 07:00       # 木金の深夜: 期限後は新規起動しない
 autopilot start all --5h-max 60                # 5h 枠を 60% で止め、残りを対話用に残す（reset 後は再開）
-autopilot stop xchain-arb                      # 以後の起動を止める（起動済みは走り続ける）
+autopilot stop xchain-arb                      # loop を止める（起動済みは走り続ける。start し直すと実行中の1本を待ってから続ける）
+autopilot pause all / resume all              # loop を生かしたまま新規起動だけ止める / 再開する
 autopilot projects                             # 定義済みプロジェクトと vaio 側の準備状況
 autopilot status / clean / res
 ```

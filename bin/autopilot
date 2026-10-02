@@ -10,6 +10,7 @@
 #   autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--skill /issue-to-pr]
 #                                                    work through the repo's queue in tmux, one job at a time
 #   autopilot stop <repo|all>                        stop launching more (running sessions keep going)
+#   autopilot pause <repo|all> / resume <repo|all>   hold / release new launches; the loop and its running job stay
 #   autopilot projects                               defined projects and whether each is ready on the worker
 #   autopilot status                                 background sessions with state and Remote Control URL
 #   autopilot clean                                  stop idle sessions (they keep ~300MB each until stopped)
@@ -117,7 +118,7 @@ plan() {
         | map(select(.u or ($urgent_only | not))) | sort_by((if .u then 0 else 1 end), .n)
         | .[] | "\(.n) \(if .u then "urgent" else "-" end) \(.t)"' \
     | while read -r n u title; do
-        if grep -qx "$n" "$st/taken" 2>/dev/null; then echo "skip issue $n launched by this loop"; continue; fi
+        if grep -qx "$n" "$st/taken" 2>/dev/null; then echo "skip issue $n already launched (autopilot add to retry)"; continue; fi
         # A linked PR means someone (a manual /issue-to-merge, an earlier loop) already took it.
         local pr; pr=$(cd "$dir" && gh issue view "$n" --json closedByPullRequestsReferences -q '[.closedByPullRequestsReferences[].number] | map("#\(.)") | join(",")')
         if [[ -n "$pr" ]]; then echo "skip issue $n linked PR $pr"; else echo "next issue $n $u $title"; fi
@@ -128,9 +129,27 @@ cmd_loop() {
   local name=$1 urgent_only=$2 deadline=$3 skill=$4 st dir
   FIVE_HOUR_MAX=$5
   st=$(repo_state "$name"); dir=$(repo_dir "$name")
-  : >"$st/taken"
+  touch "$st/taken"
+  # A job launched by an earlier loop (stopped, then started again) still counts as ours: run after it, not beside it.
+  if [[ -f $st/running ]]; then
+    local prev_kind prev_ref prev_id; read -r prev_kind prev_ref prev_id <"$st/running"
+    if [[ "$(session_field "$prev_id" status)" == busy ]]; then
+      echo "$(now) waiting for $prev_kind $prev_ref ($prev_id) launched by the previous loop"
+      while [[ "$(session_field "$prev_id" status)" == busy ]]; do sleep 60; done
+    fi
+    rm -f "$st/running"
+  fi
   while :; do
     if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break; fi
+    if [[ -f $st/paused ]]; then
+      echo "$(now) paused"
+      while [[ -f $st/paused ]]; do
+        if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break 2; fi
+        sleep 30
+      done
+      echo "$(now) resumed"
+      continue
+    fi
     local line kind ref rest prompt label id
     line=$(plan "$name" "$urgent_only" | grep -m1 '^next ')
     [[ -n "$line" ]] || { echo "$(now) queue empty"; break; }
@@ -219,11 +238,29 @@ cmd_stop() {
   echo "stopped autopilot-$name (sessions it launched keep running; see autopilot status)"
 }
 
+cmd_pause() {
+  local name=${1:?usage: autopilot pause <repo|all>} r
+  [[ $name == all ]] && { for r in $(project_names); do (cmd_pause "$r"); done; return 0; }
+  name=${name##*/}; repo_dir "$name" >/dev/null
+  touch "$(repo_state "$name")/paused"
+  echo "paused $name (the running job finishes; nothing new launches until autopilot resume $name)"
+}
+
+cmd_resume() {
+  local name=${1:?usage: autopilot resume <repo|all>} r
+  [[ $name == all ]] && { for r in $(project_names); do (cmd_resume "$r"); done; return 0; }
+  name=${name##*/}; repo_dir "$name" >/dev/null
+  rm -f "$(repo_state "$name")/paused"
+  tmux has-session -t "autopilot-$name" 2>/dev/null && echo "resumed $name" || echo "resumed $name (no loop running; autopilot start $name)"
+}
+
 cmd_add() {
   local name=${1:?usage: autopilot add <repo> <issue#|prompt> [--urgent]} what=${2:?usage: autopilot add <repo> <issue#|prompt> [--urgent]}
   local dir st; dir=$(repo_dir "$name"); st=$(repo_state "$name")
   if [[ $what =~ ^#?[0-9]+$ ]]; then
     local labels=autopilot; [[ ${3:-} == --urgent ]] && labels+=,urgent
+    # Launched issues are remembered across restarts so a job without its PR yet isn't launched twice; adding again means retry.
+    sed -i "/^${what#\#}\$/d" "$st/taken"
     (cd "$dir" && gh issue edit "${what#\#}" --add-label "$labels") >/dev/null && echo "labeled #${what#\#}: $labels"
   else
     local id; id=$(date +%Y%m%d-%H%M%S)
@@ -250,9 +287,9 @@ cmd_ls() {
     [[ -d $(project_path "$name")/.git ]] || { echo "== $name  not ready (autopilot projects)"; continue; }
     st=$(repo_state "$name")
     if tmux has-session -t "autopilot-$name" 2>/dev/null; then
-      echo "== $name  loop: $(cat "$st/loop" 2>/dev/null)  last: $(tail -1 "$st/log" 2>/dev/null)"
+      echo "== $name  loop: $([[ -f $st/paused ]] && echo "PAUSED, ")$(cat "$st/loop" 2>/dev/null)  last: $(tail -1 "$st/log" 2>/dev/null)"
     else
-      echo "== $name  loop: stopped"
+      echo "== $name  loop: stopped$([[ -f $st/paused ]] && echo " (paused: start will hold until resume)")"
     fi
     if [[ -f $st/running ]]; then
       local kind ref id; read -r kind ref id <"$st/running"
@@ -308,10 +345,12 @@ case "$cmd" in
   rm) cmd_rm "$@" ;;
   start) cmd_start "$@" ;;
   stop) cmd_stop "$@" ;;
+  pause) cmd_pause "$@" ;;
+  resume) cmd_resume "$@" ;;
   projects) cmd_projects ;;
   status) cmd_status ;;
   clean) cmd_clean ;;
   res) cmd_res ;;
   _loop) cmd_loop "$@" ;;
-  *) sed -n '2,16p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,17p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
