@@ -7,7 +7,7 @@
 #   autopilot add <repo> <issue#> [--urgent]         label the issue autopilot (and urgent)
 #   autopilot add <repo> <prompt>                    queue a free prompt, e.g. "/task-to-merge ..."
 #   autopilot rm <repo> <issue#|prompt-id>           unlabel the issue / drop the queued prompt
-#   autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--skill /issue-to-pr]
+#   autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--model sonnet] [--skill /issue-to-pr]
 #                                                    work through the repo's queue in tmux, one job at a time
 #   autopilot stop <repo|all>                        stop launching more (running sessions keep going)
 #   autopilot pause <repo|all> / resume <repo|all>   hold / release new launches; the loop and its running job stay
@@ -37,6 +37,7 @@ MIN_JOB_SECONDS=180
 LIMITS_FILE=${AUTOPILOT_LIMITS_FILE:-$HOME/.cache/claude-rate-limits.json}
 # Discord webhook for job start/finish only (one line each). Kept out of git: anyone holding the URL can post.
 WEBHOOK_FILE=$HOME/.config/autopilot/discord-webhook
+MODEL=""          # empty: settings.json default; `start --model` overrides per loop
 FIVE_HOUR_MAX=90  # default; `start --5h-max` lowers it to leave room for interactive use in the same window
 SEVEN_DAY_MAX=98
 PROJECTS_CONF=$HOME/.claude/skills/autopilot/projects.conf
@@ -75,7 +76,8 @@ session_field() { agents | jq -r --arg id "$1" --arg f "$2" '.[] | select(.id ==
 busy_count() { agents | jq '[.[] | select(.status == "busy")] | length'; }
 
 # Check and launch share one lock, held until the new session shows as busy, so two loops can't both pass the check
-# before either session is counted. Prints the session id; returns 1 with a reason on stderr when there is no room.
+# before either session is counted. Prints the session id. Returns 1 when there is no room (retry later) and 2 when
+# claude itself refused to launch (retrying would fail the same way), with the reason on stderr.
 # The name is set explicitly: auto-generated names often drop the issue number, which is what `clean` is matched by.
 try_launch() {
   local dir=$1 prompt=$2 name=$3
@@ -90,10 +92,11 @@ try_launch() {
     git -C "$dir" pull --ff-only -q || echo "$(now) warning: pull failed in $dir, launching on the current checkout" >&2
     # Output goes through a file: the backgrounded session may inherit stdout, and a pipe would block until it exits.
     out=$(mktemp)
-    (cd "$dir" && claude --bg --name "$name" --remote-control "$name" --permission-mode bypassPermissions \
+    local model_args=(); [[ -n $MODEL ]] && model_args=(--model "$MODEL")
+    (cd "$dir" && claude --bg "${model_args[@]}" --name "$name" --remote-control "$name" --permission-mode bypassPermissions \
       --append-system-prompt "$WORKER_NOTE" "$prompt") >"$out" 2>&1 </dev/null
     local id; id=$(grep -o 'backgrounded · [0-9a-f]*' "$out" | awk '{print $3}')
-    [[ -n "$id" ]] || { echo "$(now) launch failed: $(cat "$out")" >&2; rm -f "$out"; exit 1; }
+    [[ -n "$id" ]] || { echo "$(now) launch failed: $(cat "$out")" >&2; rm -f "$out"; exit 2; }
     rm -f "$out"
     for _ in $(seq 24); do (( $(busy_count) > busy )) && break; sleep 5; done
     echo "$id"
@@ -141,7 +144,7 @@ plan() {
 
 cmd_loop() {
   local name=$1 urgent_only=$2 deadline=$3 skill=$4 st dir
-  FIVE_HOUR_MAX=$5
+  FIVE_HOUR_MAX=$5 MODEL=${6:-}
   st=$(repo_state "$name"); dir=$(repo_dir "$name")
   touch "$st/taken"
   # A job launched by an earlier loop (stopped, then started again) still counts as ours: run after it, not beside it.
@@ -182,7 +185,15 @@ cmd_loop() {
       sleep $(( until_epoch - $(date +%s) + 60 ))
       continue
     fi
-    until id=$(try_launch "$dir" "$prompt" "${label:0:80}"); do
+    local rc
+    while :; do
+      id=$(try_launch "$dir" "$prompt" "${label:0:80}"); rc=$?
+      (( rc == 0 )) && break
+      if (( rc == 2 )); then
+        echo "$(now) HALTED: could not launch $kind $ref (see the launch error above). Not launching more."
+        notify "[HALTED] ${label:0:80}: claude refused to launch (model ${MODEL:-default}). Loop stopped; see autopilot log for $name"
+        break 2
+      fi
       if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break 2; fi
       sleep 60
     done
@@ -218,13 +229,14 @@ cmd_start() {
     return
   fi
   name=${name##*/}
-  local urgent_only=false until="" deadline="" skill=/issue-to-merge five_hour_max=$FIVE_HOUR_MAX dir st
+  local urgent_only=false until="" deadline="" skill=/issue-to-merge five_hour_max=$FIVE_HOUR_MAX model="" dir st
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --urgent) urgent_only=true; shift ;;
       --until) until=$2; shift 2 ;;
       --skill) skill=$2; shift 2 ;;
       --5h-max) five_hour_max=$2; shift 2 ;;
+      --model) model=$2; shift 2 ;;
       *) die "unknown option: $1" ;;
     esac
   done
@@ -240,9 +252,9 @@ cmd_start() {
     deadline=$(date -d "$until" +%s) || die "bad --until: $until"
     (( deadline > $(date +%s) )) || deadline=$(date -d "tomorrow $until" +%s)
   fi
-  echo "started $(now), until ${until:--}, 5h max ${five_hour_max}%, urgent only $urgent_only, skill $skill" >"$st/loop"
+  echo "started $(now), until ${until:--}, 5h max ${five_hour_max}%, model ${model:-default}, urgent only $urgent_only, skill $skill" >"$st/loop"
   tmux new-session -d -s "autopilot-$name" \
-    "$(printf '%q ' "$SELF" _loop "$name" "$urgent_only" "$deadline" "$skill" "$five_hour_max") >> $(printf %q "$st/log") 2>&1"
+    "$(printf '%q ' "$SELF" _loop "$name" "$urgent_only" "$deadline" "$skill" "$five_hour_max" "$model") >> $(printf %q "$st/log") 2>&1"
   echo "autopilot-$name: $(cat "$st/loop"). Log: $st/log"
 }
 
