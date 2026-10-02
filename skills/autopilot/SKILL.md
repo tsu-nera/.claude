@@ -43,4 +43,5 @@ autopilot status / clean / res
 - memory は同期しない。worker は Issue 本文と repo の規約だけで動く（ready Issue は自己完結の粒度で書く）。残す知見は PR 本文に書かせ、mouse 側で拾う
 - skill や CLI の改訂は `~/.claude` を push してから届く（`start` が vaio で pull する）
 - 終わったセッションも idle で残り1本 約300MB を持つ。PR を確認したら `clean`
+- 起動前に statusline の使用率（`~/.cache/claude-rate-limits.json`）を見る。5h が90%以上なら reset まで待ち、週が98%以上なら止める（週は使い切る方針。余らせても reset で消える）
 - loop は、セッションが `done` 以外で止まるか3分未満で終わると HALTED を出して止まる（5時間枠の上限・エラー・質問待ちで、次を起動しても同じ壁に当たるため）。`ls` の最終行で気づき、`claude attach <id>` で答えてから `start` し直す。`add` で積む短いプロンプトもこれに掛かる

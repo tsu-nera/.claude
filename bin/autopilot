@@ -32,9 +32,10 @@ MIN_AVAIL_MB=2500
 MIN_JOB_SECONDS=180
 # Usage written by statusline-command.sh, which also renders inside the worker's background sessions.
 # At the 5-hour cap the loop waits for the reset; at the weekly cap it stops, since that reset is days out.
+# The weekly cap is the real limit on purpose: unused weekly quota is lost at the reset.
 LIMITS_FILE=${AUTOPILOT_LIMITS_FILE:-$HOME/.cache/claude-rate-limits.json}
 FIVE_HOUR_MAX=90
-SEVEN_DAY_MAX=80
+SEVEN_DAY_MAX=98
 PROJECTS_CONF=$HOME/.claude/skills/autopilot/projects.conf
 STATE=$HOME/.local/state/autopilot
 SELF=$(realpath "$0")
