@@ -61,8 +61,9 @@ busy_count() { agents | jq '[.[] | select(.status == "busy")] | length'; }
 
 # Check and launch share one lock, held until the new session shows as busy, so two loops can't both pass the check
 # before either session is counted. Prints the session id; returns 1 with a reason on stderr when there is no room.
+# The name is set explicitly: auto-generated names often drop the issue number, which is what `clean` is matched by.
 try_launch() {
-  local dir=$1 prompt=$2
+  local dir=$1 prompt=$2 name=$3
   mkdir -p "$STATE"
   (
     flock 8
@@ -74,7 +75,7 @@ try_launch() {
     git -C "$dir" pull --ff-only -q || echo "$(now) warning: pull failed in $dir, launching on the current checkout" >&2
     # Output goes through a file: the backgrounded session may inherit stdout, and a pipe would block until it exits.
     out=$(mktemp)
-    (cd "$dir" && claude --bg --remote-control "$prompt" --permission-mode bypassPermissions \
+    (cd "$dir" && claude --bg --name "$name" --remote-control "$name" --permission-mode bypassPermissions \
       --append-system-prompt "$WORKER_NOTE" "$prompt") >"$out" 2>&1 </dev/null
     local id; id=$(grep -o 'backgrounded · [0-9a-f]*' "$out" | awk '{print $3}')
     [[ -n "$id" ]] || { echo "$(now) launch failed: $(cat "$out")" >&2; rm -f "$out"; exit 1; }
@@ -103,23 +104,23 @@ usage_line() {
     "usage: 5h \(pct(.five_hour))  7d \(pct(.seven_day))  as of \(.updated | strflocaltime("%H:%M"))"' "$LIMITS_FILE"
 }
 
-# One line per candidate in run order: "next prompt <id> <text>" / "next issue <n> <urgent|->" / "skip issue <n> <why>".
+# One line per candidate in run order: "next prompt <id> <text>" / "next issue <n> <urgent|-> <title>" / "skip issue <n> <why>".
 plan() {
   local name=$1 urgent_only=${2:-false} st dir f
   st=$(repo_state "$name"); dir=$(repo_dir "$name")
   for f in $(ls "$st/queue" 2>/dev/null | sort); do
     echo "next prompt ${f%.prompt} $(head -c 80 "$st/queue/$f" | tr '\n' ' ')"
   done
-  (cd "$dir" && gh issue list -l autopilot --state open --limit 100 --json number,labels) \
+  (cd "$dir" && gh issue list -l autopilot --state open --limit 100 --json number,title,labels) \
     | jq -r --argjson urgent_only "$urgent_only" '
-        map({n: .number, u: ([.labels[].name] | index("urgent") != null)})
+        map({n: .number, t: .title, u: ([.labels[].name] | index("urgent") != null)})
         | map(select(.u or ($urgent_only | not))) | sort_by((if .u then 0 else 1 end), .n)
-        | .[] | "\(.n) \(if .u then "urgent" else "-" end)"' \
-    | while read -r n u; do
+        | .[] | "\(.n) \(if .u then "urgent" else "-" end) \(.t)"' \
+    | while read -r n u title; do
         if grep -qx "$n" "$st/taken" 2>/dev/null; then echo "skip issue $n launched by this loop"; continue; fi
         # A linked PR means someone (a manual /issue-to-merge, an earlier loop) already took it.
         local pr; pr=$(cd "$dir" && gh issue view "$n" --json closedByPullRequestsReferences -q '[.closedByPullRequestsReferences[].number] | map("#\(.)") | join(",")')
-        if [[ -n "$pr" ]]; then echo "skip issue $n linked PR $pr"; else echo "next issue $n $u"; fi
+        if [[ -n "$pr" ]]; then echo "skip issue $n linked PR $pr"; else echo "next issue $n $u $title"; fi
       done
 }
 
@@ -130,11 +131,15 @@ cmd_loop() {
   : >"$st/taken"
   while :; do
     if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break; fi
-    local line kind ref prompt id
+    local line kind ref rest prompt label id
     line=$(plan "$name" "$urgent_only" | grep -m1 '^next ')
     [[ -n "$line" ]] || { echo "$(now) queue empty"; break; }
-    read -r _ kind ref _ <<<"$line"
-    if [[ $kind == prompt ]]; then prompt=$(cat "$st/queue/$ref.prompt"); else prompt="$skill $ref"; fi
+    read -r _ kind ref rest <<<"$line"
+    if [[ $kind == prompt ]]; then
+      prompt=$(cat "$st/queue/$ref.prompt"); label="$name $(head -c 60 <<<"$prompt" | tr '\n' ' ')"
+    else
+      prompt="$skill $ref"; label="$name#$ref ${rest#* }"
+    fi
     local gate verdict until_epoch
     gate=$(usage_gate); read -r verdict until_epoch _ <<<"$gate"
     if [[ $verdict == halt ]]; then echo "$(now) HALTED: ${gate#halt }"; break; fi
@@ -144,7 +149,7 @@ cmd_loop() {
       sleep $(( until_epoch - $(date +%s) + 60 ))
       continue
     fi
-    until id=$(try_launch "$dir" "$prompt"); do
+    until id=$(try_launch "$dir" "$prompt" "${label:0:80}"); do
       if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break 2; fi
       sleep 60
     done
