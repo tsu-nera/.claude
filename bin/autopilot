@@ -53,11 +53,13 @@ notify() {
   jq -n --arg c "$1" '{content: $c}' | curl -fsS -m 10 -H 'Content-Type: application/json' -d @- "$(cat "$WEBHOOK_FILE")" >/dev/null \
     || echo "$(now) warning: discord notify failed" >&2
 }
-# For a finished issue job: whether the issue closed and which PRs it links, e.g. "issue CLOSED, PR #4021".
+# Issue state plus issue and linked PR URLs, one per line. URLs are wrapped in <> so Discord doesn't unfurl them.
 issue_outcome() {
-  (cd "$1" && gh issue view "$2" --json state,closedByPullRequestsReferences \
-    -q '"issue \(.state), PR \([.closedByPullRequestsReferences[] | "#\(.number)"] | if length == 0 then "none" else join(",") end)"')
+  (cd "$1" && gh issue view "$2" --json url,state,closedByPullRequestsReferences \
+    -q '"issue \(.state) <\(.url)>" + ([.closedByPullRequestsReferences[] | "\nPR #\(.number) <\(.url)>"] | join(""))')
 }
+# Issue number a job works on: the issue itself, or the one named in a queued "/issue-to-merge 3995 ..." prompt.
+job_issue() { if [[ $1 == issue ]]; then echo "$2"; else grep -oP '/issue-to-(merge|pr)\s+#?\K[0-9]+' <<<"$3" | head -1; fi; }
 now() { date +%H:%M; }
 project_names() { grep -v '^\s*#' "$PROJECTS_CONF" | awk 'NF {print $1}'; }
 project_path() { local p; p=$(awk -v n="$1" '$1 == n {print $2}' "$PROJECTS_CONF"); echo "${p/#\~/$HOME}"; }
@@ -187,18 +189,19 @@ cmd_loop() {
     if [[ $kind == prompt ]]; then mkdir -p "$st/done"; mv "$st/queue/$ref.prompt" "$st/done/"; else echo "$ref" >>"$st/taken"; fi
     echo "$kind $ref $id" >"$st/running"
     echo "$(now) $kind $ref launched as $id"
-    notify "[start] ${label:0:80} ($id on $(hostname -s))"
+    local issue; issue=$(job_issue "$kind" "$ref" "$prompt")
+    notify "[start] ${label:0:80} ($id)${issue:+$'\n'<$(cd "$dir" && gh issue view "$issue" --json url -q .url)>}"
     local started state elapsed; started=$(date +%s)
     # Waiting for our own session keeps each loop to one slot, leaving the other for a second repo's loop.
     while [[ "$(session_field "$id" status)" == busy ]]; do sleep 60; done
     state=$(session_field "$id" state); elapsed=$(( $(date +%s) - started ))
     echo "$(now) $kind $ref $id idle (state: ${state:-gone}, $((elapsed / 60))m)"
     rm -f "$st/running"
-    local outcome=""; [[ $kind == issue ]] && outcome=", $(issue_outcome "$dir" "$ref")"
+    local outcome=""; [[ -n $issue ]] && outcome=$'\n'"$(issue_outcome "$dir" "$issue")"
     if [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); then
       echo "$(now) HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
       echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
-      notify "[HALTED] ${label:0:80}: state ${state:-gone} after $((elapsed / 60))m$outcome. Loop stopped; claude attach $id, then autopilot start $name"
+      notify "[HALTED] ${label:0:80}: state ${state:-gone} after $((elapsed / 60))m. Loop stopped; claude attach $id, then autopilot start $name$outcome"
       break
     fi
     notify "[done] ${label:0:80}: $((elapsed / 60))m$outcome"
