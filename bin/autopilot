@@ -7,7 +7,7 @@
 #   autopilot add <repo> <issue#> [--urgent]         label the issue autopilot (and urgent)
 #   autopilot add <repo> <prompt>                    queue a free prompt, e.g. "/task-to-merge ..."
 #   autopilot rm <repo> <issue#|prompt-id>           unlabel the issue / drop the queued prompt
-#   autopilot start <repo|all> [--urgent] [--until HH:MM] [--skill /issue-to-pr]
+#   autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--skill /issue-to-pr]
 #                                                    work through the repo's queue in tmux, one job at a time
 #   autopilot stop <repo|all>                        stop launching more (running sessions keep going)
 #   autopilot projects                               defined projects and whether each is ready on the worker
@@ -34,7 +34,7 @@ MIN_JOB_SECONDS=180
 # At the 5-hour cap the loop waits for the reset; at the weekly cap it stops, since that reset is days out.
 # The weekly cap is the real limit on purpose: unused weekly quota is lost at the reset.
 LIMITS_FILE=${AUTOPILOT_LIMITS_FILE:-$HOME/.cache/claude-rate-limits.json}
-FIVE_HOUR_MAX=90
+FIVE_HOUR_MAX=90  # default; `start --5h-max` lowers it to leave room for interactive use in the same window
 SEVEN_DAY_MAX=98
 PROJECTS_CONF=$HOME/.claude/skills/autopilot/projects.conf
 STATE=$HOME/.local/state/autopilot
@@ -125,6 +125,7 @@ plan() {
 
 cmd_loop() {
   local name=$1 urgent_only=$2 deadline=$3 skill=$4 st dir
+  FIVE_HOUR_MAX=$5
   st=$(repo_state "$name"); dir=$(repo_dir "$name")
   : >"$st/taken"
   while :; do
@@ -166,7 +167,7 @@ cmd_loop() {
 }
 
 cmd_start() {
-  local name=${1:?usage: autopilot start <repo|all> [--urgent] [--until HH:MM] [--skill /issue-to-pr]}; shift
+  local name=${1:?usage: autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--skill /issue-to-pr]}; shift
   if [[ $name == all ]]; then
     local r; for r in $(project_names); do
       if tmux has-session -t "autopilot-$r" 2>/dev/null; then echo "autopilot-$r: already running"; else (cmd_start "$r" "$@"); fi
@@ -174,15 +175,17 @@ cmd_start() {
     return
   fi
   name=${name##*/}
-  local urgent_only=false until="" deadline="" skill=/issue-to-merge dir st
+  local urgent_only=false until="" deadline="" skill=/issue-to-merge five_hour_max=$FIVE_HOUR_MAX dir st
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --urgent) urgent_only=true; shift ;;
       --until) until=$2; shift 2 ;;
       --skill) skill=$2; shift 2 ;;
+      --5h-max) five_hour_max=$2; shift 2 ;;
       *) die "unknown option: $1" ;;
     esac
   done
+  [[ $five_hour_max =~ ^[0-9]+$ ]] && (( five_hour_max >= 1 && five_hour_max <= 100 )) || die "--5h-max takes 1-100, got $five_hour_max"
   dir=$(repo_dir "$name"); st=$(repo_state "$name")
   tmux has-session -t "autopilot-$name" 2>/dev/null && die "already running for $name (autopilot stop $name first)"
   # Background sessions are interactive and refuse untrusted dirs.
@@ -194,9 +197,9 @@ cmd_start() {
     deadline=$(date -d "$until" +%s) || die "bad --until: $until"
     (( deadline > $(date +%s) )) || deadline=$(date -d "tomorrow $until" +%s)
   fi
-  echo "started $(now), until ${until:--}, urgent only $urgent_only, skill $skill" >"$st/loop"
+  echo "started $(now), until ${until:--}, 5h max ${five_hour_max}%, urgent only $urgent_only, skill $skill" >"$st/loop"
   tmux new-session -d -s "autopilot-$name" \
-    "$(printf '%q ' "$SELF" _loop "$name" "$urgent_only" "$deadline" "$skill") >> $(printf %q "$st/log") 2>&1"
+    "$(printf '%q ' "$SELF" _loop "$name" "$urgent_only" "$deadline" "$skill" "$five_hour_max") >> $(printf %q "$st/log") 2>&1"
   echo "autopilot-$name: $(cat "$st/loop"). Log: $st/log"
 }
 
