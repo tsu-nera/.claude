@@ -30,6 +30,7 @@ cmd_run() {
     rsync -a --delete "$mem" "$HOST:$mem"
   fi
 
+  ssh "$HOST" "bash -lc 'gh auth status >/dev/null' || { echo \"gh not logged in on $HOST\" >&2; exit 3; }"
   ssh "$HOST" "git -C ~/.claude pull --ff-only -q && git -C '$repo' pull --ff-only -q"
 
   local job="dispatch-$(date +%m%d-%H%M%S)"
