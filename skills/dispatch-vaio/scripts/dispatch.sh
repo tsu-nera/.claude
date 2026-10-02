@@ -11,7 +11,9 @@ set -euo pipefail
 HOST=vaio
 MAX_BUSY=1
 
-remote() { ssh "$HOST" bash -l <<<"$1"; }
+# status/clean/res also run on vaio itself (e.g. after ssh-ing in), where "ssh vaio" would hit vaio's own sshd without a key.
+on_vaio() { [[ "$(hostname)" == vaio* ]]; }
+remote() { if on_vaio; then bash -l <<<"$1"; else ssh "$HOST" bash -l <<<"$1"; fi; }
 agents_json() { remote 'claude agents --json'; }
 
 prepare() {
@@ -60,7 +62,7 @@ cmd_status() {
     url=$(remote "claude logs $id 2>/dev/null | grep -o 'https://claude.ai/code/session_[A-Za-z0-9]*' | tail -1" || true)
     echo "$id  $rest  ${url:-}"
   done
-  ssh "$HOST" "tmux ls -F '#{session_name}' 2>/dev/null | grep '^dispatch-' | sed 's/^/tmux: /'" || true
+  remote "tmux ls -F '#{session_name}' 2>/dev/null | grep '^dispatch-' | sed 's/^/tmux: /'" || true
 }
 
 cmd_clean() {
@@ -78,9 +80,14 @@ printf '%-8s load %s/%s  mem avail %sG/%sG  swap %sG  claude %s  heavy(tsc/vites
 PROBE
 
 cmd_res() {
+  if on_vaio; then bash <<<"$RES_PROBE"; return; fi
   bash <<<"$RES_PROBE"
   ssh "$HOST" bash <<<"$RES_PROBE"
 }
+
+case "${1:-}" in
+  run|queue) on_vaio && { echo "run/queue are for mouse; vaio is the worker" >&2; exit 1; } ;;
+esac
 
 case "${1:-}" in
   run) shift; [[ $# -eq 2 ]] || { echo "usage: dispatch.sh run <repo> <prompt>" >&2; exit 1; }; cmd_run "$@" ;;
