@@ -7,9 +7,9 @@
 #   autopilot add <repo> <issue#> [--urgent]         label the issue autopilot (and urgent)
 #   autopilot add <repo> <prompt>                    queue a free prompt, e.g. "/task-to-merge ..."
 #   autopilot rm <repo> <issue#|prompt-id>           unlabel the issue / drop the queued prompt
-#   autopilot start <repo> [--urgent] [--until HH:MM] [--skill /issue-to-pr]
+#   autopilot start <repo|all> [--urgent] [--until HH:MM] [--skill /issue-to-pr]
 #                                                    work through the repo's queue in tmux, one job at a time
-#   autopilot stop <repo>                            stop launching more (running sessions keep going)
+#   autopilot stop <repo|all>                        stop launching more (running sessions keep going)
 #   autopilot status                                 background sessions with state and Remote Control URL
 #   autopilot clean                                  stop idle sessions (they keep ~300MB each until stopped)
 #   autopilot res                                    load / memory / agent count
@@ -26,7 +26,8 @@ fi
 # there is room for one more tsc peak plus the agent.
 MAX_BUSY=2
 MIN_AVAIL_MB=2500
-DEFAULT_REPOS="xchain-arb dailybuild"
+# Repos under ~/repo that `all` and `ls` cover. A new repo also needs the autopilot/urgent labels and trust on vaio.
+REPOS="xchain-arb dailybuild"
 STATE=$HOME/.local/state/autopilot
 SELF=$(realpath "$0")
 
@@ -115,7 +116,13 @@ cmd_loop() {
 }
 
 cmd_start() {
-  local name=${1:?usage: autopilot start <repo> [--urgent] [--until HH:MM] [--skill /issue-to-pr]}; shift
+  local name=${1:?usage: autopilot start <repo|all> [--urgent] [--until HH:MM] [--skill /issue-to-pr]}; shift
+  if [[ $name == all ]]; then
+    local r; for r in $REPOS; do
+      if tmux has-session -t "autopilot-$r" 2>/dev/null; then echo "autopilot-$r: already running"; else (cmd_start "$r" "$@"); fi
+    done
+    return
+  fi
   name=${name##*/}
   local urgent_only=false until="" deadline="" skill=/issue-to-merge dir st
   while [[ $# -gt 0 ]]; do
@@ -144,7 +151,11 @@ cmd_start() {
 }
 
 cmd_stop() {
-  local name=${1:?usage: autopilot stop <repo>}; name=${name##*/}
+  local name=${1:?usage: autopilot stop <repo|all>}; name=${name##*/}
+  if [[ $name == all ]]; then
+    local r; for r in $REPOS; do tmux has-session -t "autopilot-$r" 2>/dev/null && (cmd_stop "$r"); done
+    return 0
+  fi
   tmux kill-session -t "autopilot-$name" || die "no loop running for $name"
   rm -f "$STATE/$name/loop"
   echo "stopped autopilot-$name (sessions it launched keep running; see autopilot status)"
@@ -175,7 +186,7 @@ cmd_rm() {
 
 cmd_ls() {
   local names name st
-  names=$( { printf '%s\n' $DEFAULT_REPOS; ls "$STATE" 2>/dev/null | grep -v '\.lock$'; } | sort -u)
+  names=$( { printf '%s\n' $REPOS; ls "$STATE" 2>/dev/null | grep -v '\.lock$'; } | sort -u)
   local agents_json; agents_json=$(agents)
   for name in $names; do
     [[ -d $HOME/repo/$name/.git ]] || continue

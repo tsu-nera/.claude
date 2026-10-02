@@ -26,7 +26,7 @@ autopilot ls                                   # 実行中と、これから流�
 autopilot add xchain-arb 3820 [--urgent]       # ラベルを付ける
 autopilot add xchain-arb "/task-to-merge ..."  # 自由プロンプトを積む
 autopilot rm xchain-arb 3820                   # ラベルを外す / 積んだプロンプトを消す
-autopilot start xchain-arb --urgent            # 帰宅後: 急ぎだけ
+autopilot start all --urgent                   # 帰宅後: 急ぎだけ（all = REPOS の全 repo）
 autopilot start xchain-arb --until 07:00       # 木金の深夜: 期限後は新規起動しない
 autopilot stop xchain-arb                      # 以後の起動を止める（起動済みは走り続ける）
 autopilot status / clean / res
