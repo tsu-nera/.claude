@@ -30,6 +30,11 @@ MIN_AVAIL_MB=2500
 # A job that goes idle sooner than this, or not in state done, most likely hit the 5-hour limit or an error.
 # Launching the next one would hit the same wall, so the loop halts instead of burning through the queue.
 MIN_JOB_SECONDS=180
+# Usage written by statusline-command.sh, which also renders inside the worker's background sessions.
+# At the 5-hour cap the loop waits for the reset; at the weekly cap it stops, since that reset is days out.
+LIMITS_FILE=${AUTOPILOT_LIMITS_FILE:-$HOME/.cache/claude-rate-limits.json}
+FIVE_HOUR_MAX=90
+SEVEN_DAY_MAX=80
 PROJECTS_CONF=$HOME/.claude/skills/autopilot/projects.conf
 STATE=$HOME/.local/state/autopilot
 SELF=$(realpath "$0")
@@ -78,6 +83,25 @@ try_launch() {
   ) 8>"$STATE/launch.lock"
 }
 
+# Prints "ok", "wait <epoch> <why>" or "halt <why>". A value past its reset time counts as reset; no file means no data yet.
+usage_gate() {
+  [[ -f $LIMITS_FILE ]] || { echo ok; return; }
+  jq -r --argjson now "$(date +%s)" --argjson h "$FIVE_HOUR_MAX" --argjson w "$SEVEN_DAY_MAX" '
+    def live(x): x != null and (x.resets_at // 0) > $now;
+    if live(.seven_day) and .seven_day.used_percentage >= $w then
+      "halt weekly usage \(.seven_day.used_percentage | floor)% >= \($w)% (resets \(.seven_day.resets_at | strflocaltime("%a %H:%M")))"
+    elif live(.five_hour) and .five_hour.used_percentage >= $h then
+      "wait \(.five_hour.resets_at) 5h usage \(.five_hour.used_percentage | floor)% >= \($h)%"
+    else "ok" end' "$LIMITS_FILE"
+}
+
+usage_line() {
+  [[ -f $LIMITS_FILE ]] || { echo "usage: no data yet ($LIMITS_FILE)"; return; }
+  jq -r --argjson now "$(date +%s)" '
+    def pct(x): if x != null and (x.resets_at // 0) > $now then "\(x.used_percentage | floor)% (resets \(x.resets_at | strflocaltime("%a %H:%M")))" else "reset" end;
+    "usage: 5h \(pct(.five_hour))  7d \(pct(.seven_day))  as of \(.updated | strflocaltime("%H:%M"))"' "$LIMITS_FILE"
+}
+
 # One line per candidate in run order: "next prompt <id> <text>" / "next issue <n> <urgent|->" / "skip issue <n> <why>".
 plan() {
   local name=$1 urgent_only=${2:-false} st dir f
@@ -109,6 +133,15 @@ cmd_loop() {
     [[ -n "$line" ]] || { echo "$(now) queue empty"; break; }
     read -r _ kind ref _ <<<"$line"
     if [[ $kind == prompt ]]; then prompt=$(cat "$st/queue/$ref.prompt"); else prompt="$skill $ref"; fi
+    local gate verdict until_epoch
+    gate=$(usage_gate); read -r verdict until_epoch _ <<<"$gate"
+    if [[ $verdict == halt ]]; then echo "$(now) HALTED: ${gate#halt }"; break; fi
+    if [[ $verdict == wait ]]; then
+      if [[ -n "$deadline" ]] && (( until_epoch >= deadline )); then echo "$(now) ${gate#wait * }, resets after the deadline; stopping"; break; fi
+      echo "$(now) waiting until $(date -d "@$until_epoch" +%H:%M): ${gate#wait * }"
+      sleep $(( until_epoch - $(date +%s) + 60 ))
+      continue
+    fi
     until id=$(try_launch "$dir" "$prompt"); do
       if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break 2; fi
       sleep 60
@@ -203,6 +236,7 @@ cmd_rm() {
 cmd_ls() {
   local name st
   local agents_json; agents_json=$(agents)
+  usage_line
   for name in $(project_names); do
     [[ -d $(project_path "$name")/.git ]] || { echo "== $name  not ready (autopilot projects)"; continue; }
     st=$(repo_state "$name")

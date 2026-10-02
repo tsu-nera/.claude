@@ -24,6 +24,12 @@ else
 fi
 
 # Rate limits (Pro/Max subscription only)
+# Also kept in a file: the statusline is the only place Claude Code exposes usage, and autopilot gates launches on it.
+if [ -n "$five_h" ]; then
+  mkdir -p "$HOME/.cache"
+  echo "$input" | jq -c '{five_hour: .rate_limits.five_hour, seven_day: .rate_limits.seven_day, updated: (now | floor)}' \
+    > "$HOME/.cache/claude-rate-limits.json.tmp" && mv "$HOME/.cache/claude-rate-limits.json.tmp" "$HOME/.cache/claude-rate-limits.json"
+fi
 limits=""
 if [ -n "$five_h" ]; then
   five_h_str="5h:$(printf '%.0f' "$five_h")%"
