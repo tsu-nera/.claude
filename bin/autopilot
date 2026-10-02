@@ -136,7 +136,7 @@ cmd_loop() {
     [[ -n "$line" ]] || { echo "$(now) queue empty"; break; }
     read -r _ kind ref rest <<<"$line"
     if [[ $kind == prompt ]]; then
-      prompt=$(cat "$st/queue/$ref.prompt"); label="$name $(head -c 60 <<<"$prompt" | tr '\n' ' ')"
+      prompt=$(cat "$st/queue/$ref.prompt"); label="$name ${prompt%%$'\n'*}"
     else
       prompt="$skill $ref"; label="$name#$ref ${rest#* }"
     fi
