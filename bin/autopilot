@@ -46,7 +46,9 @@ SELF=$(realpath "$0")
 
 # Appended to the system prompt rather than the prompt, which must stay a bare /skill invocation.
 # Which operations are dangerous differs per repo, so this only states that nobody is watching and defers to the repo's rules.
-WORKER_NOTE='このセッションは無人の worker で、確認できる人はいない。取り消せない操作や repo の外に影響が残る操作は、repo の規約で人の確認が要るとされているものも含めて、実行せず手前で止めて報告する。PR の作成と push は対象外（実行してよい）。'
+WORKER_NOTE='このセッションは無人の worker で、確認できる人はいない。取り消せない操作や repo の外に影響が残る操作は、repo の規約で人の確認が要るとされているものも含めて、実行せず手前で止めて報告する。PR の作成と push は対象外（実行してよい）。
+外部イベント（他人の tx・定期 job など）の到来を待つ検証は10分で打ち切り、PR 本文の「未実施」に理由と後で確かめる手順を書いて先へ進む。
+作業中に設計の不足が見つかったら、次のどれかに当たるかで分ける: 本番で稼働中の挙動に影響する / Issue の前提が誤っていた / 後続 Issue の設計が変わる / お金の経路の判定（採算・送信 gate・fee）を Issue に無い形で変える。どれにも当たらなければ妥当な方を選び、PR 本文の「判断」に選んだものと選ばなかった理由を書いて merge まで進める。どれかに当たる、または当たるか迷うなら、PR は作るが merge せず、Issue に選択肢と推奨を添えて質問をコメントし、最後に同じ質問を投げて入力待ちで止まる（loop が HALTED を通知する）。'
 
 die() { echo "autopilot: $*" >&2; exit 1; }
 notify() {
