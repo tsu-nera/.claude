@@ -30,13 +30,19 @@ mouse は外では power-saver（turbo off）なので、CPU は数字ほど余�
 ## 投入
 
 ```bash
-~/.claude/skills/dispatch-vaio/scripts/dispatch.sh run ~/repo/xchain-arb "/issue-to-pr 3981"
-~/.claude/skills/dispatch-vaio/scripts/dispatch.sh status
-~/.claude/skills/dispatch-vaio/scripts/dispatch.sh res
+S=~/.claude/skills/dispatch-vaio/scripts/dispatch.sh
+$S run ~/repo/xchain-arb "/issue-to-pr 3981"            # 1本。vaio が busy なら断る
+$S queue ~/repo/xchain-arb "/issue-to-pr 3980" "/issue-to-pr 3981"   # 順番に。出発前に積む用
+$S status    # セッション一覧と Remote Control の URL
+$S clean     # idle の background セッションを止める
+$S res
 ```
 
-script が memory の一方向同期（mouse→vaio, `--delete`）→ vaio の `~/.claude` と repo の `pull --ff-only` → tmux 内で `claude -p` まで行う。
+投入前に memory の一方向同期（mouse→vaio, `--delete`）と vaio の `~/.claude`・repo の `pull --ff-only` を行い、
+`claude --bg --remote-control` で起動する。`-p` ではなく対話セッションなので、判断待ちで止まったら
+`status` の URL（claude.ai/code・スマホアプリ）か vaio で `claude attach <id>` から答えて続けられる。
 
+- 終わったセッションも idle で残り1本 約300MB を持つ。PR を確認したら `clean`
+- background セッションは未 trust のディレクトリで起動を拒否する（新しい repo は vaio で一度 `claude` を開いて承認）
 - vaio で走る skill の改訂は、mouse の `~/.claude` を push してからでないと届かない
 - vaio 側の memory 書き込みは次の同期で消える。残す価値のある知見は PR 本文から拾って mouse 側で memory に入れる
-- 完了は PR/Issue の更新か `status` で確認する。log は stream-json

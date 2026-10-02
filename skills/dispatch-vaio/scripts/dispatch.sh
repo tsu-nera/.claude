@@ -1,46 +1,72 @@
 #!/usr/bin/env bash
-# Run a non-interactive Claude job on vaio, detached in tmux so it survives mouse sleeping or changing networks.
-#   dispatch.sh run <repo-path> <prompt>   e.g. dispatch.sh run ~/repo/xchain-arb "/issue-to-pr 3981"
-#   dispatch.sh status                      running jobs + last log lines
-#   dispatch.sh log <job>                   follow a job's log
-#   dispatch.sh res                         load / memory / agent count on mouse and vaio
+# Hand non-interactive Claude jobs to vaio as background sessions (claude --bg) with Remote Control on,
+# so they survive mouse going offline and can be answered from the phone / claude.ai/code when they get stuck.
+#   dispatch.sh run <repo> <prompt>          one job, refused while another vaio session is busy
+#   dispatch.sh queue <repo> <prompt>...     run prompts one after another (detached, survives mouse offline)
+#   dispatch.sh status                       vaio sessions with state and Remote Control URL
+#   dispatch.sh clean                        stop idle sessions (they keep ~300MB each until stopped)
+#   dispatch.sh res                          load / memory / agent count on mouse and vaio
 set -euo pipefail
 
 HOST=vaio
-LOG_DIR='~/dispatch-logs'
-MAX_JOBS=1
+MAX_BUSY=1
 
-running_jobs() { ssh "$HOST" "tmux ls -F '#{session_name}' 2>/dev/null | grep '^dispatch-' || true"; }
+remote() { ssh "$HOST" bash -l <<<"$1"; }
+agents_json() { remote 'claude agents --json'; }
 
-cmd_status() {
-  local jobs; jobs=$(running_jobs)
-  echo "running: ${jobs:-none}"
-  ssh "$HOST" "ls -t $LOG_DIR/*.log 2>/dev/null | head -3 | while read f; do echo \"== \$f\"; tail -c 600 \"\$f\"; echo; done"
-}
-
-cmd_run() {
-  local repo prompt
-  repo=$(realpath "$1"); prompt="$2"
-  local n; n=$(running_jobs | grep -c . || true)
-  if (( n >= MAX_JOBS )); then echo "vaio busy ($n job(s) running). Run on mouse or wait." >&2; exit 2; fi
-
+prepare() {
+  local repo=$1
+  remote "gh auth status >/dev/null" || { echo "gh not logged in on $HOST" >&2; exit 3; }
   # Memory dir name is the project path with / and . replaced by -, identical on both machines because repos live at the same path.
   local mem="$HOME/.claude/projects/$(echo "$repo" | sed 's#[/.]#-#g')/memory/"
   if [[ -d "$mem" ]]; then
     ssh "$HOST" "mkdir -p '$mem'"
     rsync -a --delete "$mem" "$HOST:$mem"
   fi
+  remote "git -C ~/.claude pull --ff-only -q && git -C '$repo' pull --ff-only -q"
+  # Background sessions are interactive and refuse untrusted dirs (claude -p skipped this check).
+  remote "jq -e --arg p '$repo' '.projects[\$p].hasTrustDialogAccepted' ~/.claude.json >/dev/null" \
+    || { echo "$repo is not trusted on $HOST: run claude there once and accept" >&2; exit 4; }
+}
 
-  ssh "$HOST" "bash -lc 'gh auth status >/dev/null' || { echo \"gh not logged in on $HOST\" >&2; exit 3; }"
-  ssh "$HOST" "git -C ~/.claude pull --ff-only -q && git -C '$repo' pull --ff-only -q"
+launch_cmd() {
+  printf 'cd %q && claude --bg --remote-control %q --permission-mode bypassPermissions %q' "$1" "$2" "$3"
+}
 
-  local job="dispatch-$(date +%m%d-%H%M%S)"
-  # Ship the prompt and command as a runner file so arbitrary quotes in the prompt survive ssh + tmux.
-  { printf 'cd %q\n' "$repo"
-    printf 'claude -p %q --permission-mode bypassPermissions --output-format stream-json --verbose\n' "$prompt"
-  } | ssh "$HOST" "mkdir -p $LOG_DIR && cat > $LOG_DIR/$job.sh"
-  ssh "$HOST" "tmux new-session -d -s $job \"bash -lc 'bash $LOG_DIR/$job.sh > $LOG_DIR/$job.log 2>&1'\""
-  echo "$job started on $HOST (log: $LOG_DIR/$job.log)"
+cmd_run() {
+  local repo prompt; repo=$(realpath "$1"); prompt=$2
+  local busy; busy=$(agents_json | jq '[.[] | select(.status=="busy")] | length')
+  if (( busy >= MAX_BUSY )); then echo "vaio busy ($busy session(s)). Run on mouse or use queue." >&2; exit 2; fi
+  prepare "$repo"
+  remote "$(launch_cmd "$repo" "$prompt" "$prompt")"
+}
+
+cmd_queue() {
+  local repo; repo=$(realpath "$1"); shift
+  prepare "$repo"
+  local job="dispatch-queue-$(date +%m%d-%H%M%S)" runner=""
+  # Each prompt waits until no vaio session is busy, so the queue also yields to jobs started by run.
+  for p in "$@"; do
+    runner+="until [ \"\$(claude agents --json | jq '[.[] | select(.status==\"busy\")] | length')\" = 0 ]; do sleep 60; done"$'\n'
+    runner+="$(launch_cmd "$repo" "$p" "$p")"$'\n'"sleep 120"$'\n'
+  done
+  ssh "$HOST" "mkdir -p ~/dispatch-logs && cat > ~/dispatch-logs/$job.sh" <<<"$runner"
+  ssh "$HOST" "tmux new-session -d -s $job \"bash -l ~/dispatch-logs/$job.sh > ~/dispatch-logs/$job.log 2>&1\""
+  echo "$job queued ${#} prompt(s) on $HOST (tmux session $job)"
+}
+
+cmd_status() {
+  agents_json | jq -r '.[] | "\(.id // .sessionId[:8])  \(.status)/\(.state // "-")  \(.name)"' | while read -r id rest; do
+    url=$(remote "claude logs $id 2>/dev/null | grep -o 'https://claude.ai/code/session_[A-Za-z0-9]*' | tail -1" || true)
+    echo "$id  $rest  ${url:-}"
+  done
+  ssh "$HOST" "tmux ls -F '#{session_name}' 2>/dev/null | grep '^dispatch-' | sed 's/^/tmux: /'" || true
+}
+
+cmd_clean() {
+  agents_json | jq -r '.[] | select(.kind=="background" and .status=="idle") | .id' | while read -r id; do
+    remote "claude stop $id" && echo "stopped $id"
+  done
 }
 
 # One line per host so mouse and vaio compare at a glance. Bracketed patterns keep pgrep from matching this probe itself.
@@ -54,13 +80,13 @@ PROBE
 cmd_res() {
   bash <<<"$RES_PROBE"
   ssh "$HOST" bash <<<"$RES_PROBE"
-  echo "vaio jobs: $(running_jobs | tr '\n' ' ')"
 }
 
 case "${1:-}" in
-  run) shift; [[ $# -eq 2 ]] || { echo "usage: dispatch.sh run <repo-path> <prompt>" >&2; exit 1; }; cmd_run "$@" ;;
+  run) shift; [[ $# -eq 2 ]] || { echo "usage: dispatch.sh run <repo> <prompt>" >&2; exit 1; }; cmd_run "$@" ;;
+  queue) shift; [[ $# -ge 2 ]] || { echo "usage: dispatch.sh queue <repo> <prompt>..." >&2; exit 1; }; cmd_queue "$@" ;;
   status) cmd_status ;;
+  clean) cmd_clean ;;
   res) cmd_res ;;
-  log) ssh -t "$HOST" "tail -f $LOG_DIR/$2.log" ;;
-  *) sed -n "2,7p" "$0"; exit 1 ;;
+  *) sed -n '2,9p' "$0"; exit 1 ;;
 esac
