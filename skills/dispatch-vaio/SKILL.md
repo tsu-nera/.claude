@@ -18,7 +18,10 @@ mouse が唯一の対話・memory 書き込み拠点で、vaio は投げられ�
 - 送金・deploy・本番サーバ操作（実行場所を1台に絞り事故を追跡しやすくする）
 - submodule や main 作業ツリーの状態に依存する作業
 
-vaio は同時1本（4スレッド・RAM 7.6GB で tsc が 1.8GB 食う）。埋まっていれば急ぎなら mouse、でなければ空くまで待つ。
+vaio の受け入れは busy 2本まで かつ 空きメモリ 2.5GB 以上（tsc peak 1.8GB + agent 分）。重いのは agent でなく tsc/vitest で、
+これは repo 側の lock（xchain-arb は `prepush-checks.lock`）が直列化する前提。lock の無い repo を並べると tsc が重なり得る。
+判定と起動は vaio 上の1つの lock の中で行い、新セッションが busy に見えるまで（最大120秒）lock を離さない。
+`run` は空きが無ければ断る（急ぎなら mouse）。`queue` は空くまで60秒おきに待つので、複数 queue を積んでも上限は守られる。
 ユーザーが「mouse で」「vaio で」と言えばそれに従う。行き先は投げた後に1行で報告する。
 
 ## 空き確認
@@ -31,8 +34,8 @@ mouse は外では power-saver（turbo off）なので、CPU は数字ほど余�
 
 ```bash
 S=~/.claude/skills/dispatch-vaio/scripts/dispatch.sh
-$S run ~/repo/<repo> "/issue-to-pr 3981"            # 1本。vaio が busy なら断る
-$S queue ~/repo/<repo> "/issue-to-pr 3980" "/issue-to-pr 3981"   # 順番に。出発前に積む用
+$S run ~/repo/<repo> "/issue-to-pr 3981"            # 1本。vaio に空きが無ければ断る
+$S queue ~/repo/<repo> "/issue-to-pr 3980" "/issue-to-pr 3981"   # 空き次第順に（最大2本並走）。出発前に積む用
 $S status    # セッション一覧と Remote Control の URL
 $S clean     # idle の background セッションを止める
 $S res

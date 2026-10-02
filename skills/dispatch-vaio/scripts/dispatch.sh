@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # Hand non-interactive Claude jobs to vaio as background sessions (claude --bg) with Remote Control on,
 # so they survive mouse going offline and can be answered from the phone / claude.ai/code when they get stuck.
-#   dispatch.sh run <repo> <prompt>          one job, refused while another vaio session is busy
-#   dispatch.sh queue <repo> <prompt>...     run prompts one after another (detached, survives mouse offline)
+#   dispatch.sh run <repo> <prompt>          one job, refused when vaio has no room (see try_launch)
+#   dispatch.sh queue <repo> <prompt>...     run prompts as room frees up (detached, survives mouse offline)
 #   dispatch.sh status                       vaio sessions with state and Remote Control URL
 #   dispatch.sh clean                        stop idle sessions (they keep ~300MB each until stopped)
 #   dispatch.sh res                          load / memory / agent count on mouse and vaio
 set -euo pipefail
 
 HOST=vaio
-MAX_BUSY=1
+# Agents themselves are light (~300MB, ~5% CPU); the heavy part is tsc (peak 1.8GB) and vitest (all 4 cores),
+# which repos serialize with their own lock (xchain-arb: prepush-checks.lock). So two agents fit as long as
+# there is room for one more tsc peak plus the agent.
+MAX_BUSY=2
+MIN_AVAIL_MB=2500
 
 # status/clean/res also run on vaio itself (e.g. after ssh-ing in), where "ssh vaio" would hit vaio's own sshd without a key.
 on_vaio() { [[ "$(hostname)" == vaio* ]]; }
@@ -39,22 +43,42 @@ launch_cmd() {
   printf 'cd %q && claude --bg --remote-control %q --permission-mode bypassPermissions --append-system-prompt %q %q' "$1" "$2" "$WORKER_NOTE" "$3"
 }
 
+# Shell functions shipped to vaio for both run and queue. Check and launch share one lock on vaio, and the lock is
+# held until the new session shows as busy, so a run and a queue (or two queues) can't both pass the check at once.
+gate_defs() {
+  printf 'MAX_BUSY=%s MIN_AVAIL_MB=%s\n' "$MAX_BUSY" "$MIN_AVAIL_MB"
+  cat <<'EOF'
+LOCK=$HOME/.cache/dispatch-vaio.lock
+busy_count() { claude agents --json | jq '[.[] | select(.status=="busy")] | length'; }
+try_launch() {
+  mkdir -p "$(dirname "$LOCK")"
+  (
+    flock 8
+    busy=$(busy_count); avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)
+    if (( busy >= MAX_BUSY || avail < MIN_AVAIL_MB )); then
+      echo "$(date +%H:%M) no room: busy $busy/$MAX_BUSY, mem avail ${avail}MB (need $MIN_AVAIL_MB)" >&2; exit 1
+    fi
+    (eval "$1")
+    for _ in $(seq 24); do (( $(busy_count) > busy )) && break; sleep 5; done
+  ) 8>"$LOCK"
+}
+EOF
+}
+
 cmd_run() {
   local repo prompt; repo=$(realpath "$1"); prompt=$2
-  local busy; busy=$(agents_json | jq '[.[] | select(.status=="busy")] | length')
-  if (( busy >= MAX_BUSY )); then echo "vaio busy ($busy session(s)). Run on mouse or use queue." >&2; exit 2; fi
   prepare "$repo"
-  remote "$(launch_cmd "$repo" "$prompt" "$prompt")"
+  remote "$(gate_defs)"$'\n'"try_launch $(printf %q "$(launch_cmd "$repo" "$prompt" "$prompt")")" \
+    || { echo "Run on mouse or use queue." >&2; exit 2; }
 }
 
 cmd_queue() {
   local repo; repo=$(realpath "$1"); shift
   prepare "$repo"
-  local job="dispatch-queue-$(date +%m%d-%H%M%S)" runner=""
-  # Each prompt waits until no vaio session is busy, so the queue also yields to jobs started by run.
+  local job="dispatch-queue-$(date +%m%d-%H%M%S)" runner
+  runner="$(gate_defs)"$'\n'
   for p in "$@"; do
-    runner+="until [ \"\$(claude agents --json | jq '[.[] | select(.status==\"busy\")] | length')\" = 0 ]; do sleep 60; done"$'\n'
-    runner+="$(launch_cmd "$repo" "$p" "$p")"$'\n'"sleep 120"$'\n'
+    runner+="until try_launch $(printf %q "$(launch_cmd "$repo" "$p" "$p")"); do sleep 60; done"$'\n'
   done
   ssh "$HOST" "mkdir -p ~/dispatch-logs && cat > ~/dispatch-logs/$job.sh" <<<"$runner"
   ssh "$HOST" "tmux new-session -d -s $job \"bash -l ~/dispatch-logs/$job.sh > ~/dispatch-logs/$job.log 2>&1\""
