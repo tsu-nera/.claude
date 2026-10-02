@@ -2,12 +2,13 @@
 # Run unattended Claude jobs on the worker host (vaio) as background sessions (claude --bg) with Remote Control on,
 # so they survive the laptop going offline and can be answered from the phone / claude.ai/code when they get stuck.
 # Per repo, work comes from prompts queued with `add` first, then open issues labeled autopilot (urgent first).
+# Labeled issues always run as /issue-to-merge; one that needs a human before merge is queued as a "/issue-to-pr <n>" prompt instead.
 # Run it on any host: off the worker it forwards itself over ssh.
 #   autopilot ls                                     running jobs and what runs next, per repo
 #   autopilot add <repo> <issue#> [--urgent]         label the issue autopilot (and urgent)
 #   autopilot add <repo> <prompt>                    queue a free prompt, e.g. "/task-to-merge ..."
 #   autopilot rm <repo> <issue#|prompt-id>           unlabel the issue / drop the queued prompt
-#   autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--model sonnet] [--skill /issue-to-pr]
+#   autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--model sonnet]
 #                                                    work through the repo's queue in tmux, one job at a time
 #   autopilot stop <repo|all>                        stop launching more (running sessions keep going)
 #   autopilot pause <repo|all> / resume <repo|all>   hold / release new launches; the loop and its running job stay
@@ -223,7 +224,7 @@ cmd_loop() {
 }
 
 cmd_start() {
-  local name=${1:?usage: autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--skill /issue-to-pr]}; shift
+  local name=${1:?usage: autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--model sonnet]}; shift
   if [[ $name == all ]]; then
     local r; for r in $(project_names); do
       if tmux has-session -t "autopilot-$r" 2>/dev/null; then echo "autopilot-$r: already running"; else (cmd_start "$r" "$@"); fi
@@ -236,7 +237,6 @@ cmd_start() {
     case "$1" in
       --urgent) urgent_only=true; shift ;;
       --until) until=$2; shift 2 ;;
-      --skill) skill=$2; shift 2 ;;
       --5h-max) five_hour_max=$2; shift 2 ;;
       --model) model=$2; shift 2 ;;
       *) die "unknown option: $1" ;;
@@ -385,5 +385,5 @@ case "$cmd" in
   clean) cmd_clean ;;
   res) cmd_res ;;
   _loop) cmd_loop "$@" ;;
-  *) sed -n '2,17p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,18p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

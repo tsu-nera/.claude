@@ -27,7 +27,7 @@
   - **迷ったら draft**（昇格は安い。逆は無人実行で壊れる）
 - `autopilot` ラベル = 無人で自走させてよい（いつ流すかは決めない。`autopilot` CLI が拾う）。条件は
   **blocker が無い**ことと**検証がローカルで閉じる**ことの2つだけ。レビュー要否・お金に関わるかは条件に入れない
-  （後者はユーザーが `/issue-to-pr` と `/issue-to-merge` の選択で制御する）
+  （`autopilot` の Issue は常に無人 merge まで進む。merge 前に人の判断が要るものはラベルを付けず、`autopilot add <repo> "/issue-to-pr <番号>"` で積む）
 - `urgent` ラベル = 急ぎ（帰宅後に流す）。`autopilot` CLI は `autopilot`+`urgent` を先に流す。ユーザーが「急ぎ」と言った時だけ付ける（推測で付けない）
 
 ## Memory管理

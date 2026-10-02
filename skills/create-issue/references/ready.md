@@ -106,7 +106,7 @@ Acceptance Criteria の検証可能性（codex stop condition との整合）:
 - **検証がローカルで閉じる**（実弾・サーバ deploy・課金 API・market data 調査を必要としない）
 
 満たすなら `--label autopilot` を足す。レビュー要否・お金に関わるかは条件に含めない
-（前者は既定が無人 merge、後者はユーザーが `/issue-to-pr` と `/issue-to-merge` の選択で制御する）。
+（`autopilot` の Issue は常に無人 merge まで進む。merge 前に人の判断が要る Issue はラベルを付けず、ユーザーが `/issue-to-pr` で積む）。
 
 **判定結果と理由を本文末尾に1行残す**（付けた/付けない どちらでも）。後から基準が緩んでいないか検証できるようにする。
 例: `autopilot: 見送り（#3489 の merge 待ち）` / `autopilot: 対象（blocker 無し・型チェックで担保）`

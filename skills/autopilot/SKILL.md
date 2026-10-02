@@ -35,7 +35,7 @@ autopilot projects                             # 定義済みプロジェクト�
 autopilot status / clean / res
 ```
 
-既定 skill は `/issue-to-merge`（`--skill /issue-to-pr` で変更）。モデルは settings.json の既定（opus[1m]）で、`--model sonnet` で loop ごとに変えられる。ログは vaio の `~/.local/state/autopilot/<repo>/log`。
+ラベルの Issue は常に `/issue-to-merge` で merge まで進む。merge 前に人の判断が要るもの（merge 後に deploy して観察する等）はラベルを付けず、`autopilot add <repo> "/issue-to-pr <番号>"` で積む。モデルは settings.json の既定（opus[1m]）で、`--model sonnet` で loop ごとに変えられる。ログは vaio の `~/.local/state/autopilot/<repo>/log`。
 
 ## 落とし穴
 
