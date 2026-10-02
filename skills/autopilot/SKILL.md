@@ -26,9 +26,10 @@ autopilot ls                                   # 実行中と、これから流�
 autopilot add xchain-arb 3820 [--urgent]       # ラベルを付ける
 autopilot add xchain-arb "/task-to-merge ..."  # 自由プロンプトを積む
 autopilot rm xchain-arb 3820                   # ラベルを外す / 積んだプロンプトを消す
-autopilot start all --urgent                   # 帰宅後: 急ぎだけ（all = REPOS の全 repo）
+autopilot start all --urgent                   # 帰宅後: 急ぎだけ（all = projects.conf の全プロジェクト）
 autopilot start xchain-arb --until 07:00       # 木金の深夜: 期限後は新規起動しない
 autopilot stop xchain-arb                      # 以後の起動を止める（起動済みは走り続ける）
+autopilot projects                             # 定義済みプロジェクトと vaio 側の準備状況
 autopilot status / clean / res
 ```
 
@@ -38,7 +39,7 @@ autopilot status / clean / res
 
 - 受け入れは vaio 全体で busy 2本・空きメモリ 2.5GB 以上。1つの loop は自分の1本が idle になるまで次を起動しないので、2 repo の loop が並走できる。
   重いのは agent でなく tsc/vitest で、repo 側の lock（xchain-arb は `prepush-checks.lock`）が直列化する前提
-- background セッションは未 trust のディレクトリで起動を拒否する（新しい repo は vaio の `~/.claude.json` で承認）
+- プロジェクトは `projects.conf` に定義する。追加したら vaio に clone・`~/.claude.json` で trust・`autopilot`/`urgent` ラベル作成が要る（`autopilot projects` で点検。未 trust だと background セッションが起動を拒否する）
 - memory は同期しない。worker は Issue 本文と repo の規約だけで動く（ready Issue は自己完結の粒度で書く）。残す知見は PR 本文に書かせ、mouse 側で拾う
 - skill や CLI の改訂は `~/.claude` を push してから届く（`start` が vaio で pull する）
 - 終わったセッションも idle で残り1本 約300MB を持つ。PR を確認したら `clean`

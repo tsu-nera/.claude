@@ -10,6 +10,7 @@
 #   autopilot start <repo|all> [--urgent] [--until HH:MM] [--skill /issue-to-pr]
 #                                                    work through the repo's queue in tmux, one job at a time
 #   autopilot stop <repo|all>                        stop launching more (running sessions keep going)
+#   autopilot projects                               defined projects and whether each is ready on the worker
 #   autopilot status                                 background sessions with state and Remote Control URL
 #   autopilot clean                                  stop idle sessions (they keep ~300MB each until stopped)
 #   autopilot res                                    load / memory / agent count
@@ -26,8 +27,7 @@ fi
 # there is room for one more tsc peak plus the agent.
 MAX_BUSY=2
 MIN_AVAIL_MB=2500
-# Repos under ~/repo that `all` and `ls` cover. A new repo also needs the autopilot/urgent labels and trust on vaio.
-REPOS="xchain-arb dailybuild"
+PROJECTS_CONF=$HOME/.claude/skills/autopilot/projects.conf
 STATE=$HOME/.local/state/autopilot
 SELF=$(realpath "$0")
 
@@ -37,7 +37,14 @@ WORKER_NOTE='このセッションは無人の worker で、確認できる人�
 
 die() { echo "autopilot: $*" >&2; exit 1; }
 now() { date +%H:%M; }
-repo_dir() { local d=$HOME/repo/${1##*/}; [[ -d $d/.git ]] || die "no repo at $d"; echo "$d"; }
+project_names() { grep -v '^\s*#' "$PROJECTS_CONF" | awk 'NF {print $1}'; }
+project_path() { local p; p=$(awk -v n="$1" '$1 == n {print $2}' "$PROJECTS_CONF"); echo "${p/#\~/$HOME}"; }
+repo_dir() {
+  local d; d=$(project_path "${1##*/}")
+  [[ -n $d ]] || die "unknown project ${1##*/} (define it in $PROJECTS_CONF)"
+  [[ -d $d/.git ]] || die "no clone at $d"
+  echo "$d"
+}
 repo_state() { local s=$STATE/${1##*/}; mkdir -p "$s/queue"; echo "$s"; }
 agents() { claude agents --json; }
 session_field() { agents | jq -r --arg id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]'; }
@@ -118,7 +125,7 @@ cmd_loop() {
 cmd_start() {
   local name=${1:?usage: autopilot start <repo|all> [--urgent] [--until HH:MM] [--skill /issue-to-pr]}; shift
   if [[ $name == all ]]; then
-    local r; for r in $REPOS; do
+    local r; for r in $(project_names); do
       if tmux has-session -t "autopilot-$r" 2>/dev/null; then echo "autopilot-$r: already running"; else (cmd_start "$r" "$@"); fi
     done
     return
@@ -153,7 +160,7 @@ cmd_start() {
 cmd_stop() {
   local name=${1:?usage: autopilot stop <repo|all>}; name=${name##*/}
   if [[ $name == all ]]; then
-    local r; for r in $REPOS; do tmux has-session -t "autopilot-$r" 2>/dev/null && (cmd_stop "$r"); done
+    local r; for r in $(project_names); do tmux has-session -t "autopilot-$r" 2>/dev/null && (cmd_stop "$r"); done
     return 0
   fi
   tmux kill-session -t "autopilot-$name" || die "no loop running for $name"
@@ -185,11 +192,10 @@ cmd_rm() {
 }
 
 cmd_ls() {
-  local names name st
-  names=$( { printf '%s\n' $REPOS; ls "$STATE" 2>/dev/null | grep -v '\.lock$'; } | sort -u)
+  local name st
   local agents_json; agents_json=$(agents)
-  for name in $names; do
-    [[ -d $HOME/repo/$name/.git ]] || continue
+  for name in $(project_names); do
+    [[ -d $(project_path "$name")/.git ]] || { echo "== $name  not ready (autopilot projects)"; continue; }
     st=$(repo_state "$name")
     if tmux has-session -t "autopilot-$name" 2>/dev/null; then
       echo "== $name  loop: $(cat "$st/loop" 2>/dev/null)  last: $(tail -1 "$st/log" 2>/dev/null)"
@@ -201,6 +207,22 @@ cmd_ls() {
       echo "  running  $kind $ref  $id  $(jq -r --arg id "$id" '.[] | select(.id == $id) | "\(.status)/\(.state)  \(.name)"' <<<"$agents_json")"
     fi
     plan "$name" | sed 's/^/  /'
+  done
+}
+
+cmd_projects() {
+  local name dir problems labels
+  for name in $(project_names); do
+    dir=$(project_path "$name"); problems=()
+    if [[ ! -d $dir/.git ]]; then
+      problems+=("no clone at $dir")
+    else
+      jq -e --arg p "$dir" '.projects[$p].hasTrustDialogAccepted' ~/.claude.json >/dev/null || problems+=("not trusted")
+      labels=$(cd "$dir" && gh label list --limit 200 --json name -q '.[].name' 2>&1)
+      grep -qx autopilot <<<"$labels" || problems+=("no autopilot label")
+      grep -qx urgent <<<"$labels" || problems+=("no urgent label")
+    fi
+    if (( ${#problems[@]} )); then echo "$name  $dir  NOT READY: $(IFS=,; echo "${problems[*]}")"; else echo "$name  $dir  ready"; fi
   done
 }
 
@@ -234,9 +256,10 @@ case "$cmd" in
   rm) cmd_rm "$@" ;;
   start) cmd_start "$@" ;;
   stop) cmd_stop "$@" ;;
+  projects) cmd_projects ;;
   status) cmd_status ;;
   clean) cmd_clean ;;
   res) cmd_res ;;
   _loop) cmd_loop "$@" ;;
-  *) sed -n '2,15p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,16p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
