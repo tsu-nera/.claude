@@ -1,6 +1,6 @@
 ---
 name: dispatch-vaio
-description: 対話なしで完結する仕事を自宅サーバ vaio に投げるか mouse（このPC）で回すかを決め、投げる場合は vaio の background セッション（Remote Control 付き）に投入する。ready Issue の /issue-to-pr・/issue-to-merge、autopilot の金曜バッチ、「vaioで」「vaioに投げて」と言われた時、mouse の負荷を逃がしたい時に使う。
+description: 対話なしで完結する仕事を自宅サーバ vaio に投げるか mouse（このPC）で回すかを決め、投げる場合は vaio の background セッション（Remote Control 付き）に投入する。ready Issue の /issue-to-pr・/issue-to-merge、autopilot・urgent ラベルの Issue の消化（drain）、「vaioで」「vaioに投げて」と言われた時、mouse の負荷を逃がしたい時に使う。
 ---
 
 # dispatch-vaio
