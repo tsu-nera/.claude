@@ -67,7 +67,7 @@ cmd_status() {
 
 cmd_clean() {
   agents_json | jq -r '[.[] | select(.kind=="background" and .status=="idle") | .id] | unique | .[]' | while read -r id; do
-    remote "claude stop $id" && echo "stopped $id"
+    remote "claude stop $id" >/dev/null && echo "stopped $id"
   done
 }
 
