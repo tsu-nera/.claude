@@ -14,9 +14,9 @@ mouse が唯一の対話・memory 書き込み拠点で、vaio は投げられ�
 - 単発の起票・docs 更新
 
 **mouse**: 判断を挟む仕事と、お金・サーバに触る仕事
-- 調査・設計相談・daily-screen の optimize 以降
-- 実弾送金・`with-nonce-tunnel.sh` 経由の ops・deploy・conoha 操作（実行場所を1台に絞り事故を追跡しやすくする）
-- ledger 系（`resources/ledger` submodule と main 作業ツリーが前提）
+- 調査・設計相談
+- 送金・deploy・本番サーバ操作（実行場所を1台に絞り事故を追跡しやすくする）
+- submodule や main 作業ツリーの状態に依存する作業
 
 vaio は同時1本（4スレッド・RAM 7.6GB で tsc が 1.8GB 食う）。埋まっていれば急ぎなら mouse、でなければ空くまで待つ。
 ユーザーが「mouse で」「vaio で」と言えばそれに従う。行き先は投げた後に1行で報告する。
@@ -31,8 +31,8 @@ mouse は外では power-saver（turbo off）なので、CPU は数字ほど余�
 
 ```bash
 S=~/.claude/skills/dispatch-vaio/scripts/dispatch.sh
-$S run ~/repo/xchain-arb "/issue-to-pr 3981"            # 1本。vaio が busy なら断る
-$S queue ~/repo/xchain-arb "/issue-to-pr 3980" "/issue-to-pr 3981"   # 順番に。出発前に積む用
+$S run ~/repo/<repo> "/issue-to-pr 3981"            # 1本。vaio が busy なら断る
+$S queue ~/repo/<repo> "/issue-to-pr 3980" "/issue-to-pr 3981"   # 順番に。出発前に積む用
 $S status    # セッション一覧と Remote Control の URL
 $S clean     # idle の background セッションを止める
 $S res

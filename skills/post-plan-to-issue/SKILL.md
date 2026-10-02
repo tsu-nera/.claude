@@ -138,5 +138,5 @@ gh issue edit <issue-number> --add-label "claude-planned" --repo <repo>
 ```
 /post-plan-to-issue 127
 /post-plan-to-issue #127 --plan=vivid-stirring-blum.md
-/post-plan-to-issue 127 --repo=tsu-nera/xchain-arb
+/post-plan-to-issue 127 --repo=owner/repo
 ```
