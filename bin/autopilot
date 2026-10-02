@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+# Run unattended Claude jobs on the worker host (vaio) as background sessions (claude --bg) with Remote Control on,
+# so they survive the laptop going offline and can be answered from the phone / claude.ai/code when they get stuck.
+# Per repo, work comes from prompts queued with `add` first, then open issues labeled autopilot (urgent first).
+# Run it on any host: off the worker it forwards itself over ssh.
+#   autopilot ls                                     running jobs and what runs next, per repo
+#   autopilot add <repo> <issue#> [--urgent]         label the issue autopilot (and urgent)
+#   autopilot add <repo> <prompt>                    queue a free prompt, e.g. "/task-to-merge ..."
+#   autopilot rm <repo> <issue#|prompt-id>           unlabel the issue / drop the queued prompt
+#   autopilot start <repo> [--urgent] [--until HH:MM] [--skill /issue-to-pr]
+#                                                    work through the repo's queue in tmux, one job at a time
+#   autopilot stop <repo>                            stop launching more (running sessions keep going)
+#   autopilot status                                 background sessions with state and Remote Control URL
+#   autopilot clean                                  stop idle sessions (they keep ~300MB each until stopped)
+#   autopilot res                                    load / memory / agent count
+set -uo pipefail
+
+HOST=vaio
+if [[ "$(hostname)" != ${HOST}* ]]; then
+  tty=(); [[ -t 0 ]] && tty=(-t)
+  exec ssh "${tty[@]}" "$HOST" "bash -lc $(printf %q "$(printf '%q ' autopilot "$@")")"
+fi
+
+# Agents themselves are light (~300MB, ~5% CPU); the heavy part is tsc (peak 1.8GB) and vitest (all 4 cores),
+# which repos serialize with their own lock (xchain-arb: prepush-checks.lock). So two agents fit as long as
+# there is room for one more tsc peak plus the agent.
+MAX_BUSY=2
+MIN_AVAIL_MB=2500
+DEFAULT_REPOS="xchain-arb dailybuild"
+STATE=$HOME/.local/state/autopilot
+SELF=$(realpath "$0")
+
+# Appended to the system prompt rather than the prompt, which must stay a bare /skill invocation.
+# Which operations are dangerous differs per repo, so this only states that nobody is watching and defers to the repo's rules.
+WORKER_NOTE='このセッションは無人の worker で、確認できる人はいない。取り消せない操作や repo の外に影響が残る操作は、repo の規約で人の確認が要るとされているものも含めて、実行せず手前で止めて報告する。PR の作成と push は対象外（実行してよい）。'
+
+die() { echo "autopilot: $*" >&2; exit 1; }
+now() { date +%H:%M; }
+repo_dir() { local d=$HOME/repo/${1##*/}; [[ -d $d/.git ]] || die "no repo at $d"; echo "$d"; }
+repo_state() { local s=$STATE/${1##*/}; mkdir -p "$s/queue"; echo "$s"; }
+agents() { claude agents --json; }
+session_field() { agents | jq -r --arg id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]'; }
+busy_count() { agents | jq '[.[] | select(.status == "busy")] | length'; }
+
+# Check and launch share one lock, held until the new session shows as busy, so two loops can't both pass the check
+# before either session is counted. Prints the session id; returns 1 with a reason on stderr when there is no room.
+try_launch() {
+  local dir=$1 prompt=$2
+  mkdir -p "$STATE"
+  (
+    flock 8
+    local busy avail out
+    busy=$(busy_count); avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)
+    if (( busy >= MAX_BUSY || avail < MIN_AVAIL_MB )); then
+      echo "$(now) no room: busy $busy/$MAX_BUSY, mem avail ${avail}MB (need $MIN_AVAIL_MB)" >&2; exit 1
+    fi
+    git -C "$dir" pull --ff-only -q || echo "$(now) warning: pull failed in $dir, launching on the current checkout" >&2
+    # Output goes through a file: the backgrounded session may inherit stdout, and a pipe would block until it exits.
+    out=$(mktemp)
+    (cd "$dir" && claude --bg --remote-control "$prompt" --permission-mode bypassPermissions \
+      --append-system-prompt "$WORKER_NOTE" "$prompt") >"$out" 2>&1 </dev/null
+    local id; id=$(grep -o 'backgrounded · [0-9a-f]*' "$out" | awk '{print $3}')
+    [[ -n "$id" ]] || { echo "$(now) launch failed: $(cat "$out")" >&2; rm -f "$out"; exit 1; }
+    rm -f "$out"
+    for _ in $(seq 24); do (( $(busy_count) > busy )) && break; sleep 5; done
+    echo "$id"
+  ) 8>"$STATE/launch.lock"
+}
+
+# One line per candidate in run order: "next prompt <id> <text>" / "next issue <n> <urgent|->" / "skip issue <n> <why>".
+plan() {
+  local name=$1 urgent_only=${2:-false} st dir f
+  st=$(repo_state "$name"); dir=$(repo_dir "$name")
+  for f in $(ls "$st/queue" 2>/dev/null | sort); do
+    echo "next prompt ${f%.prompt} $(head -c 80 "$st/queue/$f" | tr '\n' ' ')"
+  done
+  (cd "$dir" && gh issue list -l autopilot --state open --limit 100 --json number,labels) \
+    | jq -r --argjson urgent_only "$urgent_only" '
+        map({n: .number, u: ([.labels[].name] | index("urgent") != null)})
+        | map(select(.u or ($urgent_only | not))) | sort_by((if .u then 0 else 1 end), .n)
+        | .[] | "\(.n) \(if .u then "urgent" else "-" end)"' \
+    | while read -r n u; do
+        if grep -qx "$n" "$st/taken" 2>/dev/null; then echo "skip issue $n launched by this loop"; continue; fi
+        # A linked PR means someone (a manual /issue-to-merge, an earlier loop) already took it.
+        local pr; pr=$(cd "$dir" && gh issue view "$n" --json closedByPullRequestsReferences -q '[.closedByPullRequestsReferences[].number] | map("#\(.)") | join(",")')
+        if [[ -n "$pr" ]]; then echo "skip issue $n linked PR $pr"; else echo "next issue $n $u"; fi
+      done
+}
+
+cmd_loop() {
+  local name=$1 urgent_only=$2 deadline=$3 skill=$4 st dir
+  st=$(repo_state "$name"); dir=$(repo_dir "$name")
+  : >"$st/taken"
+  while :; do
+    if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break; fi
+    local line kind ref prompt id
+    line=$(plan "$name" "$urgent_only" | grep -m1 '^next ')
+    [[ -n "$line" ]] || { echo "$(now) queue empty"; break; }
+    read -r _ kind ref _ <<<"$line"
+    if [[ $kind == prompt ]]; then prompt=$(cat "$st/queue/$ref.prompt"); else prompt="$skill $ref"; fi
+    until id=$(try_launch "$dir" "$prompt"); do
+      if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break 2; fi
+      sleep 60
+    done
+    if [[ $kind == prompt ]]; then mkdir -p "$st/done"; mv "$st/queue/$ref.prompt" "$st/done/"; else echo "$ref" >>"$st/taken"; fi
+    echo "$kind $ref $id" >"$st/running"
+    echo "$(now) $kind $ref launched as $id"
+    # Waiting for our own session keeps each loop to one slot, leaving the other for a second repo's loop.
+    while [[ "$(session_field "$id" status)" == busy ]]; do sleep 60; done
+    # A state other than done means it stopped to ask something; it stays open for an answer and the loop moves on.
+    echo "$(now) $kind $ref $id idle (state: $(session_field "$id" state))"
+    rm -f "$st/running"
+  done
+  rm -f "$st/running" "$st/loop"
+}
+
+cmd_start() {
+  local name=${1:?usage: autopilot start <repo> [--urgent] [--until HH:MM] [--skill /issue-to-pr]}; shift
+  name=${name##*/}
+  local urgent_only=false until="" deadline="" skill=/issue-to-merge dir st
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --urgent) urgent_only=true; shift ;;
+      --until) until=$2; shift 2 ;;
+      --skill) skill=$2; shift 2 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  dir=$(repo_dir "$name"); st=$(repo_state "$name")
+  tmux has-session -t "autopilot-$name" 2>/dev/null && die "already running for $name (autopilot stop $name first)"
+  # Background sessions are interactive and refuse untrusted dirs.
+  jq -e --arg p "$dir" '.projects[$p].hasTrustDialogAccepted' ~/.claude.json >/dev/null \
+    || die "$dir is not trusted: run claude there once and accept"
+  gh auth status >/dev/null 2>&1 || die "gh is not logged in"
+  git -C ~/.claude pull --ff-only -q || echo "warning: ~/.claude pull failed, skills may be stale" >&2
+  if [[ -n "$until" ]]; then
+    deadline=$(date -d "$until" +%s) || die "bad --until: $until"
+    (( deadline > $(date +%s) )) || deadline=$(date -d "tomorrow $until" +%s)
+  fi
+  echo "started $(now), until ${until:--}, urgent only $urgent_only, skill $skill" >"$st/loop"
+  tmux new-session -d -s "autopilot-$name" \
+    "$(printf '%q ' "$SELF" _loop "$name" "$urgent_only" "$deadline" "$skill") >> $(printf %q "$st/log") 2>&1"
+  echo "autopilot-$name: $(cat "$st/loop"). Log: $st/log"
+}
+
+cmd_stop() {
+  local name=${1:?usage: autopilot stop <repo>}; name=${name##*/}
+  tmux kill-session -t "autopilot-$name" || die "no loop running for $name"
+  rm -f "$STATE/$name/loop"
+  echo "stopped autopilot-$name (sessions it launched keep running; see autopilot status)"
+}
+
+cmd_add() {
+  local name=${1:?usage: autopilot add <repo> <issue#|prompt> [--urgent]} what=${2:?usage: autopilot add <repo> <issue#|prompt> [--urgent]}
+  local dir st; dir=$(repo_dir "$name"); st=$(repo_state "$name")
+  if [[ $what =~ ^#?[0-9]+$ ]]; then
+    local labels=(--add-label autopilot); [[ ${3:-} == --urgent ]] && labels+=(--add-label urgent)
+    (cd "$dir" && gh issue edit "${what#\#}" "${labels[@]}") >/dev/null && echo "labeled #${what#\#}: ${labels[*]//--add-label /}"
+  else
+    local id; id=$(date +%Y%m%d-%H%M%S)
+    printf '%s\n' "$what" >"$st/queue/$id.prompt"
+    echo "queued $id"
+  fi
+}
+
+cmd_rm() {
+  local name=${1:?usage: autopilot rm <repo> <issue#|prompt-id>} what=${2:?usage: autopilot rm <repo> <issue#|prompt-id>}
+  local dir st; dir=$(repo_dir "$name"); st=$(repo_state "$name")
+  if [[ $what =~ ^#?[0-9]+$ ]]; then
+    (cd "$dir" && gh issue edit "${what#\#}" --remove-label autopilot --remove-label urgent) >/dev/null && echo "unlabeled #${what#\#}"
+  else
+    rm "$st/queue/$what.prompt" && echo "dropped $what"
+  fi
+}
+
+cmd_ls() {
+  local names name st
+  names=$( { printf '%s\n' $DEFAULT_REPOS; ls "$STATE" 2>/dev/null | grep -v '\.lock$'; } | sort -u)
+  local agents_json; agents_json=$(agents)
+  for name in $names; do
+    [[ -d $HOME/repo/$name/.git ]] || continue
+    st=$(repo_state "$name")
+    if tmux has-session -t "autopilot-$name" 2>/dev/null; then
+      echo "== $name  loop: $(cat "$st/loop" 2>/dev/null)  last: $(tail -1 "$st/log" 2>/dev/null)"
+    else
+      echo "== $name  loop: stopped"
+    fi
+    if [[ -f $st/running ]]; then
+      local kind ref id; read -r kind ref id <"$st/running"
+      echo "  running  $kind $ref  $id  $(jq -r --arg id "$id" '.[] | select(.id == $id) | "\(.status)/\(.state)  \(.name)"' <<<"$agents_json")"
+    fi
+    plan "$name" | sed 's/^/  /'
+  done
+}
+
+cmd_status() {
+  agents | jq -r --argjson now "$(date +%s)" '.[] | "\(.id)  \(.status)/\(.state // "-")  \((($now - .startedAt/1000) / 60 | floor))m  \(.name)"' \
+    | while read -r id rest; do
+        url=$(claude logs "$id" 2>/dev/null | grep -o 'https://claude.ai/code/session_[A-Za-z0-9]*' | tail -1)
+        echo "$id  $rest  ${url:-}"
+      done
+}
+
+cmd_clean() {
+  agents | jq -r '[.[] | select(.kind == "background" and .status == "idle") | .id] | unique | .[]' | while read -r id; do
+    claude stop "$id" >/dev/null && echo "stopped $id"
+  done
+}
+
+cmd_res() {
+  local mt ma sw
+  read -r _ mt _ <<<"$(free -g | grep Mem)"; ma=$(free -g | awk '/Mem/{print $7}'); sw=$(free -g | awk '/Swap/{print $3}')
+  # Bracketed patterns keep pgrep from matching this probe itself.
+  printf '%s  load %s/%s  mem avail %sG/%sG  swap %sG  claude %s  heavy(tsc/vitest) %s\n' \
+    "$(hostname -s)" "$(cut -d' ' -f1 /proc/loadavg)" "$(nproc)" "$ma" "$mt" "$sw" \
+    "$(pgrep -cx claude)" "$(pgrep -cf '[t]sc |[v]itest')"
+}
+
+cmd=${1:-}; shift || true
+case "$cmd" in
+  ls) cmd_ls ;;
+  add) cmd_add "$@" ;;
+  rm) cmd_rm "$@" ;;
+  start) cmd_start "$@" ;;
+  stop) cmd_stop "$@" ;;
+  status) cmd_status ;;
+  clean) cmd_clean ;;
+  res) cmd_res ;;
+  _loop) cmd_loop "$@" ;;
+  *) sed -n '2,15p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac
