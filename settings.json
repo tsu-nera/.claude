@@ -42,6 +42,15 @@
             "command": "~/.claude/hooks/block-raw-gh-issue-create.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/require-merge-gate.sh"
+          }
+        ]
       }
     ]
   },

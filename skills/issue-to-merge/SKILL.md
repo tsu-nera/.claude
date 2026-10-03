@@ -7,7 +7,7 @@ user-invocable: true
 # Issue to Merge - 全自動ワークフロー
 
 GitHub Issueを入力に、設計→実装→PR作成→動作確認→mergeまで人間の確認なしで実行する**薄いオーケストレーター**。
-中身は既存スキル（`/issue-to-pr` → `/test-pr` → `/lgtm`）の連結。
+中身は既存スキル（`/issue-to-pr` → `/test-pr` → merge-gate → `/lgtm`）の連結。
 
 ## 使い方
 `/issue-to-merge <issue番号>`
@@ -32,6 +32,8 @@ Issue が複雑でも `/issue-to-merge` を使ってよい。複雑さは停止�
 
 それ以外で停止してよいのは、実装が技術的に行き詰まった時（テスト修正上限到達・コンフリクト解消不能）のみ。
 
+AC が未達・前提が誤っていた場合は、人間に聞かず、新しいコンテキストの agent に実測結果を渡して AC を改訂させ、それに従って merge まで進める（実装者が自分で AC を緩めない）。
+
 ## Instructions for Claude:
 
 ### Phase 1: PR作成
@@ -48,9 +50,13 @@ Issue が複雑でも `/issue-to-merge` を使ってよい。複雑さは停止�
 - 全パス → Phase 3 へ
 - 失敗（修正上限到達） → 中断してユーザーに報告。merge はしない
 
-### Phase 3: マージ
+### Phase 3: 独立レビュー → マージ
 
-`/lgtm <PR番号>` を Skill ツールで起動する。
+merge してよいかは実装したこのセッションではなく `~/.claude/bin/merge-gate <PR番号>` が決める（repo の policy・verify と、文脈を持たない別の `claude -p` が diff を Issue と突き合わせる）。判定を覆さない。承認なしの `gh pr merge` は hook が止める。
+
+- exit 0（APPROVE） → `/lgtm <PR番号>` を Skill ツールで起動する。rebase や push で head が変わったら merge-gate からやり直す
+- exit 1（REJECT） → 指摘を直して push し、もう一度 merge-gate。2回目も REJECT なら exit 2 と同じ扱い
+- exit 2（要人間） → merge しない。PR は残し、理由を Issue にコメントして同じ内容を質問として投げ、入力待ちで止まる
 
 ### Phase 4: 完了報告
 

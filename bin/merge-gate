@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# Independent checker for autonomous merges (/issue-to-merge). The session that implemented a PR never judges it:
+# this script runs the repo's own policy and verify command, then a fresh `claude -p` reviews the diff against the
+# issue with no access to the maker's reasoning. Only an APPROVE leaves an approval token, and the
+# require-merge-gate hook refuses `gh pr merge` in an /issue-to-merge session without a token for the PR's head.
+#
+# usage: merge-gate <pr-number>   (run inside the repo or one of its worktrees)
+# exit:  0 approve / 1 reject (fix and rerun) / 2 needs a human (do not merge)
+#
+# Policy lives in the repo at .claude/merge-gate.json and is read from the base branch, so a PR can't loosen its own
+# gate. All keys optional: {"verify": "<cmd run in the PR worktree>", "maxFiles": N, "deny": [glob...],
+# "skipReview": [glob...], "reviewFocus": [line...]}. Globs use bash [[ == ]] matching, where * also crosses "/".
+set -uo pipefail
+
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/merge-gate
+GATE_FILE=.claude/merge-gate.json
+MAX_DIFF_BYTES=150000
+CHECKER_TIMEOUT=1200
+
+die() { echo "merge-gate: $*" >&2; exit 2; }
+matches_any() { local f=$1 p; shift; for p in "$@"; do [[ $f == $p ]] && return 0; done; return 1; }
+
+pr=${1:-}; [[ $pr =~ ^[0-9]+$ ]] || die "usage: merge-gate <pr-number>"
+main_repo=$(git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel) || die "not in a git repo"
+cd "$main_repo" || die "cannot cd to $main_repo"
+
+info=$(gh pr view "$pr" --json number,state,isDraft,title,body,url,headRefName,headRefOid,baseRefName,closingIssuesReferences) \
+  || die "gh pr view $pr failed"
+[[ $(jq -r .state <<<"$info") == OPEN ]] || die "PR #$pr is not open"
+[[ $(jq -r .isDraft <<<"$info") == false ]] || die "PR #$pr is a draft"
+head_sha=$(jq -r .headRefOid <<<"$info"); head_ref=$(jq -r .headRefName <<<"$info"); base=$(jq -r .baseRefName <<<"$info")
+repo_slug=$(jq -r .url <<<"$info" | sed -E 's#https://github.com/([^/]+)/([^/]+)/pull/.*#\1_\2#')
+
+git fetch -q origin "$base" || die "git fetch origin $base failed"
+gate=$(git show "origin/$base:$GATE_FILE" 2>/dev/null || echo '{}')
+jq -e . >/dev/null <<<"$gate" || die "$GATE_FILE on origin/$base is not valid JSON"
+[[ $gate == '{}' ]] && echo "merge-gate: no $GATE_FILE on origin/$base; running the checker without repo policy"
+mapfile -t deny < <(jq -r '.deny // [] | .[]' <<<"$gate")
+mapfile -t skip_review < <(jq -r '.skipReview // [] | .[]' <<<"$gate")
+deny+=("$GATE_FILE")
+max_files=$(jq -r '.maxFiles // empty' <<<"$gate")
+verify_cmd=$(jq -r '.verify // empty' <<<"$gate")
+focus=$(jq -r '.reviewFocus // [] | .[] | "- " + .' <<<"$gate")
+
+mapfile -t files < <(gh pr diff "$pr" --name-only) || die "gh pr diff failed"
+(( ${#files[@]} > 0 )) || die "PR #$pr has no changed files"
+denied=(); for f in "${files[@]}"; do matches_any "$f" "${deny[@]}" && denied+=("$f"); done
+(( ${#denied[@]} == 0 )) || die "touches paths that need a human: ${denied[*]}"
+[[ -z $max_files ]] || (( ${#files[@]} <= max_files )) || die "${#files[@]} files changed (limit $max_files)"
+
+wt=$(git worktree list --porcelain | awk -v b="refs/heads/$head_ref" '/^worktree /{w=substr($0,10)} $0=="branch "b{print w}')
+[[ -n $wt ]] || die "no local worktree has $head_ref checked out"
+[[ $(git -C "$wt" rev-parse HEAD) == "$head_sha" ]] || die "worktree $wt is not at the PR head $head_sha (push or pull first)"
+[[ -z $(git -C "$wt" status --porcelain --untracked-files=no) ]] || die "worktree $wt has uncommitted changes"
+
+mkdir -p "$STATE/approved"
+log() {
+  jq -nc --arg repo "$repo_slug" --argjson pr "$pr" --arg sha "$head_sha" --arg verdict "$1" --arg cost "${2:-}" \
+    --arg secs "${3:-}" --arg host "$(hostname)" \
+    '{ts: (now | todate), host: $host, repo: $repo, pr: $pr, sha: $sha, verdict: $verdict,
+      cost_usd: ($cost | tonumber? // null), seconds: ($secs | tonumber? // null)}' >>"$STATE/log.jsonl"
+}
+approve() {
+  touch "$STATE/approved/$repo_slug-$pr-$head_sha"
+  echo "merge-gate: APPROVE #$pr at $head_sha"; exit 0
+}
+
+if [[ -n $verify_cmd ]]; then
+  echo "merge-gate: verify in $wt: $verify_cmd"
+  vlog=$(mktemp)
+  if ! (cd "$wt" && bash -c "$verify_cmd") >"$vlog" 2>&1; then
+    tail -40 "$vlog"; rm -f "$vlog"; log verify-failed
+    echo "merge-gate: REJECT #$pr: verify failed (output above)"; exit 1
+  fi
+  rm -f "$vlog"
+fi
+
+all_skip=true; for f in "${files[@]}"; do matches_any "$f" "${skip_review[@]}" || { all_skip=false; break; }; done
+if $all_skip && (( ${#skip_review[@]} > 0 )); then log approve-skip-review; approve; fi
+
+diff=$(gh pr diff "$pr") || die "gh pr diff failed"
+(( ${#diff} <= MAX_DIFF_BYTES )) || die "diff is ${#diff} bytes (limit $MAX_DIFF_BYTES), too large for one review"
+issues=""
+for n in $(jq -r '.closingIssuesReferences[].number' <<<"$info"); do
+  issues+=$'\n'"### Issue #$n"$'\n'"$(gh issue view "$n" --json title,body -q '"# " + .title + "\n\n" + .body')"$'\n'
+done
+[[ -n $issues ]] || issues="(the PR links no issue; judge against the PR description)"
+
+prompt=$(mktemp)
+cat >"$prompt" <<EOF
+You are the checker for an autonomous merge. Another agent implemented the pull request below and wants to merge it
+without a human. You did not write it and owe it nothing. Your default answer is REJECT; approve only when you are
+convinced the change does what the issue asks and nothing it should not.
+
+The repository's verify command has already passed on this exact commit, so do not rerun builds or tests. Your job is
+what tests miss: requirements the issue states that the diff does not meet, logic errors, changed behavior the issue
+did not ask for, unrelated edits, and violations of the repository rules (CLAUDE.md / AGENTS.md are loaded). You are
+in the PR's worktree and may read any file for context. Do not modify anything.
+${focus:+
+Repository-specific points to check:
+$focus
+}
+Reject only for concrete problems you can point to in the diff, not for style preferences or hypothetical concerns.
+
+# PR #$pr: $(jq -r .title <<<"$info")
+
+$(jq -r .body <<<"$info")
+
+# Linked issues
+$issues
+
+# Diff
+\`\`\`diff
+$diff
+\`\`\`
+
+End your reply with exactly one line of JSON and nothing after it:
+{"verdict": "APPROVE" or "REJECT", "reasons": ["<one line each; for REJECT, file:line and what is wrong>"]}
+EOF
+
+echo "merge-gate: checker reviewing #$pr (${#files[@]} files, ${#diff} bytes of diff)"
+started=$(date +%s)
+out=$(cd "$wt" && timeout "$CHECKER_TIMEOUT" claude -p --output-format json --no-session-persistence \
+  --permission-mode dontAsk --allowedTools "Read,Grep,Glob" <"$prompt")
+rc=$?; rm -f "$prompt"
+secs=$(( $(date +%s) - started ))
+cost=$(jq -r '.total_cost_usd // empty' <<<"$out" 2>/dev/null)
+result=$(jq -r '.result // empty' <<<"$out" 2>/dev/null)
+verdict_json=$(grep -E '^\s*\{.*"verdict"' <<<"$result" | tail -1)
+verdict=$(jq -r '.verdict // empty' <<<"$verdict_json" 2>/dev/null)
+if (( rc != 0 )) || [[ $verdict != APPROVE && $verdict != REJECT ]]; then
+  log checker-error "$cost" "$secs"
+  echo "${result:-$out}" | tail -20
+  die "checker gave no verdict (exit $rc)"
+fi
+reasons=$(jq -r '.reasons // [] | .[] | "- " + .' <<<"$verdict_json")
+log "${verdict,,}" "$cost" "$secs"
+echo "merge-gate: checker $verdict in ${secs}s (cost \$${cost:-?})"
+[[ -n $reasons ]] && echo "$reasons"
+gh pr comment "$pr" --body "$(printf 'merge-gate checker: **%s** (head %s)\n\n%s' "$verdict" "${head_sha:0:10}" "$reasons")" >/dev/null \
+  || echo "merge-gate: warning: could not comment on PR #$pr" >&2
+[[ $verdict == APPROVE ]] && approve
+exit 1
