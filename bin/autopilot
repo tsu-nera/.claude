@@ -216,18 +216,17 @@ cmd_loop() {
     echo "$(now) $kind $ref $id idle (state: ${state:-gone}, $((elapsed / 60))m)"
     rm -f "$st/running"
     local outcome=""; [[ -n $issue ]] && outcome=$'\n'"$(issue_outcome "$dir" "$issue")"
-    # The state label lags or misreads the session's last turn (#3820 merged, then read as "working"), so a closed issue wins.
-    if [[ $state != done && -n $issue ]] && (( elapsed >= MIN_JOB_SECONDS )) && issue_closed_by_pr "$dir" "$issue"; then
-      echo "$(now) $kind $ref: issue closed by its PR, counting as done"
-      state=done
-    fi
-    # A question is about this issue only; the next one won't hit the same wall. Its open PR keeps it out of the next plan.
-    if [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
+    # A closed issue is proof of success whatever the state label says (#3820 merged, then read as "working") or however
+    # short the job (#3988 merged in 3m), so it skips both checks below.
+    local closed=false
+    if [[ -n $issue ]] && issue_closed_by_pr "$dir" "$issue"; then closed=true; fi
+    # A question is about this issue only; the next one won't hit the same wall. `taken` keeps it out of the next plan.
+    if ! $closed && [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
       echo "$(now) $kind $ref blocked on a question, skipping. answer: claude attach $id"
       notify "[blocked] ${label:0:80}: waiting for an answer, loop continues; claude attach $id$outcome"
       continue
     fi
-    if [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); then
+    if ! $closed && { [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); }; then
       echo "$(now) HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
       echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
       notify "[HALTED] ${label:0:80}: state ${state:-gone} after $((elapsed / 60))m. Loop stopped; claude attach $id, then autopilot start $name$outcome"
