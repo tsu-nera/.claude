@@ -4,12 +4,12 @@ model: haiku
 
 # LGTM
 
-共通手順は `@/home/tsu-nera/.claude/docs/lgtm.md` を読む。
+ユーザーが PR をレビューして OK と判断した。`~/.claude/bin/pr-land <PR番号>` で merge と worktree / branch の後片付けをする。
 
-Claude Code では、特に次のセクションを適用する。
+PR 番号が引数や発話に無ければ `gh pr list` で探し、一意に決まらなければユーザーに確認する。
 
-- `共通方針`
-- `共通手順`
-- `Claude Code セクション`
+- exit 0 → 出力（merge commit・削除した worktree / branch・warning）をそのまま報告
+- exit 3（base とコンフリクト） → PR の worktree で `origin/<base>` に rebase して解消し、push してもう一度 pr-land。自動解消できない・設計判断が要るコンフリクトなら止めて報告
+- exit 2 → merge せず理由を報告
 
-ユーザーが PR をレビューして OK と判断したため、対象 PR を merge して branch / worktree を安全に片付ける。
+`git reset --hard`・`git checkout -f`・`git stash`・`git clean` で同期問題を解消しない。

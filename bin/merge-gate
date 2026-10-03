@@ -120,7 +120,8 @@ EOF
 
 echo "merge-gate: checker reviewing #$pr (${#files[@]} files, ${#diff} bytes of diff)"
 started=$(date +%s)
-out=$(cd "$wt" && timeout "$CHECKER_TIMEOUT" claude -p --output-format json --no-session-persistence \
+# The checker needs the repo rules, not the user's memory index (about 8k tokens of context on every turn).
+out=$(cd "$wt" && CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 timeout "$CHECKER_TIMEOUT" claude -p --output-format json --no-session-persistence \
   --permission-mode dontAsk --allowedTools "Read,Grep,Glob" <"$prompt")
 rc=$?; rm -f "$prompt"
 secs=$(( $(date +%s) - started ))

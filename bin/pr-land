@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Merge a PR and clean up its worktree and branches. A fixed procedure, so it runs as a script rather than as
+# agent turns re-reading a long context. In an /issue-to-merge session the require-merge-gate hook treats this
+# like `gh pr merge` and wants a merge-gate approval first.
+#
+# usage: pr-land <pr-number>   (run inside the repo or one of its worktrees)
+# exit:  0 merged (cleanup warnings are printed, not fatal) / 2 not mergeable, leave it to a human /
+#        3 conflicts with the base: rebase onto it, push, and run again (rerun merge-gate first if it applies)
+set -uo pipefail
+
+die() { echo "pr-land: $*" >&2; exit 2; }
+warn() { echo "pr-land: warning: $*" >&2; }
+
+pr=${1:-}; [[ $pr =~ ^[0-9]+$ ]] || die "usage: pr-land <pr-number>"
+main_repo=$(git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel) || die "not in a git repo"
+cd "$main_repo" || die "cannot cd to $main_repo"
+
+info=$(gh pr view "$pr" --json state,isDraft,mergeable,headRefName,baseRefName,statusCheckRollup,url) || die "gh pr view $pr failed"
+state=$(jq -r .state <<<"$info"); head_ref=$(jq -r .headRefName <<<"$info"); base=$(jq -r .baseRefName <<<"$info")
+
+if [[ $state == OPEN ]]; then
+  [[ $(jq -r .isDraft <<<"$info") == false ]] || die "PR #$pr is a draft"
+  failed=$(jq -r '[.statusCheckRollup[]? | select((.conclusion // .state // "") | test("FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED")) | (.name // .context)] | join(", ")' <<<"$info")
+  [[ -z $failed ]] || die "PR #$pr has failing checks: $failed"
+  if [[ $(jq -r .mergeable <<<"$info") == CONFLICTING ]]; then
+    echo "pr-land: PR #$pr conflicts with $base; rebase onto origin/$base, push, and run again" >&2; exit 3
+  fi
+  # No --delete-branch: merging and deleting stay separate so a failed merge never loses the branch.
+  gh pr merge "$pr" --merge || die "gh pr merge $pr failed"
+elif [[ $state != MERGED ]]; then
+  die "PR #$pr is $state"
+fi
+
+oid=""
+for _ in 1 2 3; do
+  oid=$(gh pr view "$pr" --json mergeCommit -q '.mergeCommit.oid // empty') && [[ -n $oid ]] && break
+  sleep 2
+done
+[[ -n $oid ]] || die "PR #$pr shows no merge commit; not cleaning up"
+
+git fetch -q origin "$base" || warn "git fetch origin $base failed"
+for _ in $(seq 8); do git merge-base --is-ancestor "$oid" "origin/$base" 2>/dev/null && break; sleep 2; git fetch -q origin "$base"; done
+git merge-base --is-ancestor "$oid" "origin/$base" || die "merge commit $oid is not on origin/$base yet; not cleaning up"
+
+# Worktrees made for agents are locked, so remove needs an unlock first. The main checkout is never removed.
+wt=$(git worktree list --porcelain | awk -v b="refs/heads/$head_ref" '/^worktree /{w=substr($0,10)} $0=="branch "b{print w}')
+removed=""
+if [[ -n $wt && $wt != "$main_repo" ]]; then
+  git worktree unlock "$wt" 2>/dev/null
+  if git worktree remove --force "$wt"; then removed=$wt; else warn "could not remove worktree $wt"; fi
+fi
+
+# The main checkout may be in use for other work: update it only when it already sits on the base branch, and
+# only by fast-forward. Never switch its branch or reset it.
+if [[ $(git branch --show-current) == "$base" ]]; then
+  git merge --ff-only -q "origin/$base" || warn "could not fast-forward $base in $main_repo (local changes or commits); left as is"
+fi
+
+deleted=()
+if git show-ref -q --verify "refs/heads/$head_ref"; then
+  if git branch -D "$head_ref" >/dev/null; then deleted+=(local); else warn "could not delete local branch $head_ref"; fi
+fi
+if git ls-remote --exit-code -q --heads origin "$head_ref" >/dev/null; then
+  if git push -q origin --delete "$head_ref"; then deleted+=(remote); else warn "could not delete remote branch $head_ref"; fi
+fi
+
+echo "pr-land: merged #$pr as $oid${removed:+, removed worktree $removed}${deleted:+, deleted ${deleted[*]} branch $head_ref}"

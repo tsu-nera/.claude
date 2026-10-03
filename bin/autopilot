@@ -100,7 +100,10 @@ try_launch() {
     # Output goes through a file: the backgrounded session may inherit stdout, and a pipe would block until it exits.
     out=$(mktemp)
     local model_args=(); [[ -n $MODEL ]] && model_args=(--model "$MODEL")
-    (cd "$dir" && claude --bg "${model_args[@]}" --name "$name" --remote-control "$name" --permission-mode bypassPermissions \
+    # Workers run on the issue and the repo rules, not on memory (about 9k tokens re-read every turn). An env var
+    # would not reach the session: the bg daemon does not pass the caller's environment through, flags it keeps.
+    (cd "$dir" && claude --bg "${model_args[@]}" --settings '{"autoMemoryEnabled": false}' \
+      --name "$name" --remote-control "$name" --permission-mode bypassPermissions \
       --append-system-prompt "$WORKER_NOTE" "$prompt") >"$out" 2>&1 </dev/null
     local id; id=$(grep -o 'backgrounded · [0-9a-f]*' "$out" | awk '{print $3}')
     [[ -n "$id" ]] || { echo "$(now) launch failed: $(cat "$out")" >&2; rm -f "$out"; exit 2; }

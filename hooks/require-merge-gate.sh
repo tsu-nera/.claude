@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse(Bash|Write|Edit): in a session that ran /issue-to-merge, `gh pr merge <n>` needs the approval token
+# PreToolUse(Bash|Write|Edit): in a session that ran /issue-to-merge, `gh pr merge <n>` (or pr-land) needs the approval token
 # ~/.claude/bin/merge-gate leaves for the PR's current head. The implementing session must not be the one that decides
 # its PR is good enough; a human-driven /lgtm session never ran /issue-to-merge and is not affected.
 set -uo pipefail
@@ -33,7 +33,8 @@ code=$(awk '
 
 grep -q 'merge-gate/approved' <<<"$code" && deny "Approval tokens are written only by ~/.claude/bin/merge-gate."
 
-grep -qE '(^|[;&|(][[:space:]]*|^[[:space:]]*)gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)' <<<"$code" || exit 0
+# pr-land runs gh pr merge inside, out of this hook's sight, so it counts as a merge too.
+grep -qE '(^|[;&|(][[:space:]]*|^[[:space:]]*)(gh[[:space:]]+pr[[:space:]]+merge|([^[:space:]]*/)?pr-land)([[:space:]]|$)' <<<"$code" || exit 0
 
 transcript=$(jq -r '.transcript_path // empty' <<<"$input")
 [[ -f $transcript ]] || exit 0
@@ -45,8 +46,8 @@ jq -e -s 'any(.[];
         and (.message.content | contains("<command-name>/issue-to-merge</command-name>"))))' \
   "$transcript" >/dev/null 2>&1 || exit 0
 
-pr=$(grep -oP 'gh\s+pr\s+merge\s+#?\K[0-9]+' <<<"$code" | head -1)
-[[ -n $pr ]] || deny "In an /issue-to-merge session, pass the PR number to gh pr merge explicitly."
+pr=$(grep -oP '(gh\s+pr\s+merge|pr-land)\s+#?\K[0-9]+' <<<"$code" | head -1)
+[[ -n $pr ]] || deny "In an /issue-to-merge session, pass the PR number to gh pr merge / pr-land explicitly."
 repo_flag=$(grep -oP '(-R|--repo)[\s=]+\K\S+' <<<"$code" | head -1)
 cwd=$(jq -r '.cwd // empty' <<<"$input")
 view=$(cd "${cwd:-.}" && gh pr view "$pr" ${repo_flag:+-R "$repo_flag"} --json url,headRefOid 2>&1) \
