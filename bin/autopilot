@@ -62,6 +62,10 @@ issue_outcome() {
   (cd "$1" && gh issue view "$2" --json url,state,closedByPullRequestsReferences \
     -q '"issue \(.state) <\(.url)>" + ([.closedByPullRequestsReferences[] | "\nPR #\(.number) <\(.url)>"] | join(""))')
 }
+issue_closed_by_pr() {
+  [[ "$(cd "$1" && gh issue view "$2" --json state,closedByPullRequestsReferences \
+    -q '.state == "CLOSED" and (.closedByPullRequestsReferences | length > 0)')" == true ]]
+}
 # Issue number a job works on: the issue itself, or the one named in a queued "/issue-to-merge 3995 ..." prompt.
 job_issue() { if [[ $1 == issue ]]; then echo "$2"; else grep -oP '/issue-to-(merge|pr)\s+#?\K[0-9]+' <<<"$3" | head -1; fi; }
 now() { date +%H:%M; }
@@ -212,6 +216,17 @@ cmd_loop() {
     echo "$(now) $kind $ref $id idle (state: ${state:-gone}, $((elapsed / 60))m)"
     rm -f "$st/running"
     local outcome=""; [[ -n $issue ]] && outcome=$'\n'"$(issue_outcome "$dir" "$issue")"
+    # The state label lags or misreads the session's last turn (#3820 merged, then read as "working"), so a closed issue wins.
+    if [[ $state != done && -n $issue ]] && (( elapsed >= MIN_JOB_SECONDS )) && issue_closed_by_pr "$dir" "$issue"; then
+      echo "$(now) $kind $ref: issue closed by its PR, counting as done"
+      state=done
+    fi
+    # A question is about this issue only; the next one won't hit the same wall. Its open PR keeps it out of the next plan.
+    if [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
+      echo "$(now) $kind $ref blocked on a question, skipping. answer: claude attach $id"
+      notify "[blocked] ${label:0:80}: waiting for an answer, loop continues; claude attach $id$outcome"
+      continue
+    fi
     if [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); then
       echo "$(now) HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
       echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
