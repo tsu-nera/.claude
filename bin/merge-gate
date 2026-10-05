@@ -8,8 +8,10 @@
 # exit:  0 approve / 1 reject (fix and rerun) / 2 needs a human (do not merge)
 #
 # Policy lives in the repo at .claude/merge-gate.json and is read from the base branch, so a PR can't loosen its own
-# gate. All keys optional: {"verify": "<cmd run in the PR worktree>", "maxFiles": N, "deny": [glob...],
-# "skipReview": [glob...], "reviewFocus": [line...]}. Globs use bash [[ == ]] matching, where * also crosses "/".
+# gate. All keys optional: {"verify": "<cmd run in the PR worktree>", "maxFiles": N, "countExclude": [glob...],
+# "deny": [glob...], "skipReview": [glob...], "reviewFocus": [line...]}. Globs use bash [[ == ]] matching, where *
+# also crosses "/". maxFiles counts only files outside countExclude: tests and docs add review load, not risk, and
+# the diff-size limit below still bounds what the checker has to read.
 set -uo pipefail
 
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/merge-gate
@@ -39,6 +41,7 @@ mapfile -t deny < <(jq -r '.deny // [] | .[]' <<<"$gate")
 mapfile -t skip_review < <(jq -r '.skipReview // [] | .[]' <<<"$gate")
 deny+=("$GATE_FILE")
 max_files=$(jq -r '.maxFiles // empty' <<<"$gate")
+mapfile -t count_exclude < <(jq -r '.countExclude // [] | .[]' <<<"$gate")
 verify_cmd=$(jq -r '.verify // empty' <<<"$gate")
 focus=$(jq -r '.reviewFocus // [] | .[] | "- " + .' <<<"$gate")
 
@@ -46,7 +49,9 @@ mapfile -t files < <(gh pr diff "$pr" --name-only) || die "gh pr diff failed"
 (( ${#files[@]} > 0 )) || die "PR #$pr has no changed files"
 denied=(); for f in "${files[@]}"; do matches_any "$f" "${deny[@]}" && denied+=("$f"); done
 (( ${#denied[@]} == 0 )) || die "touches paths that need a human: ${denied[*]}"
-[[ -z $max_files ]] || (( ${#files[@]} <= max_files )) || die "${#files[@]} files changed (limit $max_files)"
+counted=0; for f in "${files[@]}"; do matches_any "$f" "${count_exclude[@]}" || counted=$((counted + 1)); done
+[[ -z $max_files ]] || (( counted <= max_files )) \
+  || die "$counted files changed outside countExclude (limit $max_files; ${#files[@]} in total)"
 
 wt=$(git worktree list --porcelain | awk -v b="refs/heads/$head_ref" '/^worktree /{w=substr($0,10)} $0=="branch "b{print w}')
 [[ -n $wt ]] || die "no local worktree has $head_ref checked out"
