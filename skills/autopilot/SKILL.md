@@ -16,6 +16,14 @@ vaio が worker。`autopilot` CLI（`~/.claude/bin/autopilot`）は vaio 上で�
 
 ユーザーが「mouse で」「vaio で」と言えばそれに従う。行き先は積んだ後に1行で報告する。
 
+対話セッションから積んだら、loop の止まり目を待つコマンドを `run_in_background` で張る（止まった時に自分が呼び戻され、すぐ報告・対処できる）:
+
+```bash
+ssh vaio 'L=~/.local/state/autopilot/<repo>/log; n=$(wc -l <$L); until tail -n +$((n+1)) $L | grep -aqE "blocked|HALTED|queue empty"; do sleep 30; done; tail -n +$((n+1)) $L'
+```
+
+blocked の質問が委任の範囲内（merge-gate の機械的な上限など）なら、自分で答えてから `autopilot start` し直す。範囲外ならユーザーに上げる。
+
 ## キュー
 
 repo ごとに、`add` で積んだ自由プロンプト → `autopilot`+`urgent` → 残りの `autopilot` の順で流れる。

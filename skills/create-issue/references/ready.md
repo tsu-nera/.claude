@@ -46,8 +46,11 @@ gh repo view --json nameWithOwner -q .nameWithOwner
 `issue-to-pr` は「独立して merge・レビューできる成果物が複数に分かれる規模」を `SPLIT_NEEDED` として人間に差し戻す。
 **それを未然に防ぐため、Issue 作成前にスコープを判定する。**
 
+基準は「repo の merge-gate（`.claude/merge-gate.json`）の上限に収まるか」。収まるなら、Phase に分けられそうでも1本にする。
+無人実装は1本ごとに文脈の読み直しという固定コストがかかり、前段が止まると後段も連鎖して止まる（axelar-gateway を2本に分けて約1時間を失った）。
+
 - **1 PR で完結する規模** → Step 3 へ。
-- **複数 PR に割るべき規模** → 単一 Issue を作らず、分割を提案する:
+- **merge-gate の上限を超える規模** → 単一 Issue を作らず、分割を提案する:
   - 親子関係が要るなら `create-subissue` を案内
   - 1つの大きな塊を割るなら `split-issue` を案内
   - どう割るか（境界）の案を添えてユーザーに確認する。
@@ -95,7 +98,7 @@ Acceptance Criteria の検証可能性（codex stop condition との整合）:
 - AC は **focused unit/regression test か typecheck で検証できる形**で書く
 - live smoke・外部データ調査が必要な検証は blocking AC に混ぜず「## 検証」セクションへ分離する。
   codex が AC を literally 追って deep troubleshooting（LayerZeroScan / onchain receipt / market data 調査等）に
-  滑り込むのを Issue 文面で防ぐ（#2038 の教訓）
+  滑り込むのを Issue 文面で防ぐ
 - AC が現行コード / registry / data の実態と衝突しないか Step 1 の探索で確認する（衝突は codex の即 handoff トリガー）
 
 ### Step 4: autopilot 判定
@@ -109,7 +112,7 @@ Acceptance Criteria の検証可能性（codex stop condition との整合）:
 （`autopilot` の Issue は常に無人 merge まで進む。merge 前に人の判断が要る Issue はラベルを付けず、ユーザーが `/issue-to-pr` で積む）。
 
 **判定結果と理由を本文末尾に1行残す**（付けた/付けない どちらでも）。後から基準が緩んでいないか検証できるようにする。
-例: `autopilot: 見送り（#3489 の merge 待ち）` / `autopilot: 対象（blocker 無し・型チェックで担保）`
+例: `autopilot: 見送り（#<番号> の merge 待ち）` / `autopilot: 対象（blocker 無し・型チェックで担保）`
 
 不変条件: **`autopilot` が付いている = キューから任意の順で取り出して回せる**。
 これが崩れると autopilot の並列 worktree 実行が壊れるので、blocker 条件は必ず守ること。
