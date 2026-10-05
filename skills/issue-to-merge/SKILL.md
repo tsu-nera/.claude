@@ -32,9 +32,20 @@ Issue が複雑でも `/issue-to-merge` を使ってよい。複雑さは停止�
 
 それ以外で停止してよいのは、実装が技術的に行き詰まった時（テスト修正上限到達・コンフリクト解消不能）のみ。
 
-AC が未達・前提が誤っていた場合は、人間に聞かず、新しいコンテキストの agent に実測結果を渡して AC を改訂させ、それに従って merge まで進める（実装者が自分で AC を緩めない）。
+### AC 改訂（前提の誤り・AC 未達）
+
+人間に聞かず、新しいコンテキストの agent に実測結果と選択肢を渡して決めさせ、それに従って merge まで進める（実装者が自分で AC を緩めない・自分の推奨を自分で承認しない）。
+
+- 選ぶ基準: 取り消しやすい方、影響範囲の狭い方、見積もりなら過小評価しない方。何が安全側かの repo 固有の基準は `.claude/merge-gate.json` の `reviewFocus` 等に従う
+- 決定は Issue 本文に `## 追加決定` 見出しで書き戻す（決めたこと・理由・選ばなかった案・追加 AC）。merge-gate は diff を Issue 本文と突き合わせるので、コメントや PR 本文だけに書くと「Issue に無い変更」として REJECT される
 
 ## Instructions for Claude:
+
+### Phase 0: 再開判定
+
+`gh pr list --state open --search "<issue番号>"` でこの Issue の open PR が既にあれば、新規実装せず再開する:
+- Issue のコメントを読む（`gh issue view <番号> --comments`）。最後の質問より後の回答を `## 追加決定` として Issue 本文に反映する
+- PR のブランチを worktree に checkout し、回答に沿って残りを実装・push して Phase 2 へ
 
 ### Phase 1: PR作成
 
@@ -49,7 +60,7 @@ merge してよいかは実装したこのセッションではなく `~/.claude
 
 - exit 0（APPROVE） → `~/.claude/bin/pr-land <PR番号>` で merge と後片付け。pr-land が exit 3（コンフリクト）なら rebase して push し、head が変わったので merge-gate からやり直す
 - exit 1（REJECT） → 指摘を直して push し、もう一度 merge-gate。2回目も REJECT なら exit 2 と同じ扱い
-- exit 2（要人間） → merge しない。PR は残し、理由を Issue にコメントして同じ内容を質問として投げ、入力待ちで止まる
+- exit 2（要人間） → merge しない。PR は残し、理由と選択肢・推奨を Issue にコメントする。対話セッションなら同じ内容を質問して待つ（無人 worker は worker の指示に従う）
 
 ### Phase 3: 完了報告
 

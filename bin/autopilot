@@ -49,7 +49,8 @@ SELF=$(realpath "$0")
 # Which operations are dangerous differs per repo, so this only states that nobody is watching and defers to the repo's rules.
 WORKER_NOTE='このセッションは無人の worker で、確認できる人はいない。取り消せない操作や repo の外に影響が残る操作は、repo の規約で人の確認が要るとされているものも含めて、実行せず手前で止めて報告する。PR の作成と push は対象外（実行してよい）。
 外部イベント（他人の tx・定期 job など）の到来を待つ検証は10分で打ち切り、PR 本文の「未実施」に理由と後で確かめる手順を書いて先へ進む。
-作業中に設計の不足が見つかったら、次のどれかに当たるかで分ける: 本番で稼働中の挙動に影響する / Issue の前提が誤っていた / 後続 Issue の設計が変わる / お金の経路の判定（採算・送信 gate・fee）を Issue に無い形で変える。どれにも当たらなければ妥当な方を選び、PR 本文の「判断」に選んだものと選ばなかった理由を書いて merge まで進める。どれかに当たる、または当たるか迷うなら、PR は作るが merge せず、Issue に選択肢と推奨を添えて質問をコメントし、最後に同じ質問を投げて入力待ちで止まる（loop が HALTED を通知する）。'
+設計の不足や Issue の前提の誤りが見つかっても止まらない。/issue-to-merge の「AC 改訂」に従い、決定を Issue 本文の「## 追加決定」に書いてから merge まで進める。
+人の判断が要る時（SPLIT_NEEDED・merge-gate が要人間・上の取り消せない操作が要る・要件が読めない）も入力待ちで止まらない。PR は残し、Issue に選択肢と推奨を添えて質問をコメントし、`gh issue edit <番号> --add-label needs-answer --remove-label autopilot --remove-label urgent` を実行して終了する。朝まで答える人はいない。人が Issue のコメントで答えて `autopilot add` で積み直すと、既存の PR から再開される。'
 
 die() { echo "autopilot: $*" >&2; exit 1; }
 notify() {
@@ -62,6 +63,13 @@ issue_outcome() {
   (cd "$1" && gh issue view "$2" --json url,state,closedByPullRequestsReferences \
     -q '"issue \(.state) <\(.url)>" + ([.closedByPullRequestsReferences[] | "\nPR #\(.number) <\(.url)>"] | join(""))')
 }
+issue_has_label() {
+  [[ "$(cd "$1" && gh issue view "$2" --json labels -q "[.labels[].name] | index(\"$3\") != null")" == true ]]
+}
+issue_has_decision() {
+  (cd "$1" && gh issue view "$2" --json body -q .body) | grep -q '^## 追加決定'
+}
+issue_url() { (cd "$1" && gh issue view "$2" --json url -q .url); }
 issue_closed_by_pr() {
   [[ "$(cd "$1" && gh issue view "$2" --json state,closedByPullRequestsReferences \
     -q '.state == "CLOSED" and (.closedByPullRequestsReferences | length > 0)')" == true ]]
@@ -146,6 +154,8 @@ plan() {
         | .[] | "\(.n) \(if .u then "urgent" else "-" end) \(.t)"' \
     | while read -r n u title; do
         if grep -qx "$n" "$st/taken" 2>/dev/null; then echo "skip issue $n already launched (autopilot add to retry)"; continue; fi
+        # Re-added after an answer: the PR it left behind is where /issue-to-merge resumes, not a reason to skip.
+        if grep -qx "$n" "$st/resume" 2>/dev/null; then echo "next issue $n $u $title"; continue; fi
         # A linked PR means someone (a manual /issue-to-merge, an earlier loop) already took it.
         local pr; pr=$(cd "$dir" && gh issue view "$n" --json closedByPullRequestsReferences -q '[.closedByPullRequestsReferences[].number] | map("#\(.)") | join(",")')
         if [[ -n "$pr" ]]; then echo "skip issue $n linked PR $pr"; else echo "next issue $n $u $title"; fi
@@ -157,6 +167,8 @@ cmd_loop() {
   FIVE_HOUR_MAX=$5 MODEL=${6:-}
   st=$(repo_state "$name"); dir=$(repo_dir "$name")
   touch "$st/taken"
+  # Read once when the loop ends: the jobs run overnight, so one summary in the morning beats a notification per job.
+  local digest; digest=$(mktemp)
   # A job launched by an earlier loop (stopped, then started again) still counts as ours: run after it, not beside it.
   if [[ -f $st/running ]]; then
     local prev_kind prev_ref prev_id; read -r prev_kind prev_ref prev_id <"$st/running"
@@ -207,7 +219,7 @@ cmd_loop() {
       if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break 2; fi
       sleep 60
     done
-    if [[ $kind == prompt ]]; then mkdir -p "$st/done"; mv "$st/queue/$ref.prompt" "$st/done/"; else echo "$ref" >>"$st/taken"; fi
+    if [[ $kind == prompt ]]; then mkdir -p "$st/done"; mv "$st/queue/$ref.prompt" "$st/done/"; else echo "$ref" >>"$st/taken"; sed -i "/^${ref}\$/d" "$st/resume" 2>/dev/null; fi
     echo "$kind $ref $id" >"$st/running"
     echo "$(now) $kind $ref launched as $id"
     local issue; issue=$(job_issue "$kind" "$ref" "$prompt")
@@ -223,9 +235,23 @@ cmd_loop() {
     # short the job (#3988 merged in 3m), so it skips both checks below.
     local closed=false
     if [[ -n $issue ]] && issue_closed_by_pr "$dir" "$issue"; then closed=true; fi
+    local ref_line="${label:0:80}${issue:+ <$(issue_url "$dir" "$issue")>}"
+    if $closed; then
+      local decided=""; issue_has_decision "$dir" "$issue" && decided=" (agent decided: see 追加決定)"
+      echo "merged  $ref_line$decided" >>"$digest"
+    fi
+    # The worker hands a question back through the issue and exits, so the session holds nothing worth keeping.
+    if ! $closed && [[ -n $issue ]] && issue_has_label "$dir" "$issue" needs-answer; then
+      echo "$(now) $kind $ref needs an answer on the issue, skipping"
+      echo "answer  $ref_line" >>"$digest"
+      claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"
+      notify "[needs-answer] ${label:0:80}: answer on the issue, then autopilot add$outcome"
+      continue
+    fi
     # A question is about this issue only; the next one won't hit the same wall. `taken` keeps it out of the next plan.
     if ! $closed && [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
       echo "$(now) $kind $ref blocked on a question, skipping. answer: claude attach $id"
+      echo "blocked $ref_line (claude attach $id)" >>"$digest"
       notify "[blocked] ${label:0:80}: waiting for an answer, loop continues; claude attach $id$outcome"
       continue
     fi
@@ -233,13 +259,17 @@ cmd_loop() {
       echo "$(now) HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
       echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
       notify "[HALTED] ${label:0:80}: state ${state:-gone} after $((elapsed / 60))m. Loop stopped; claude attach $id, then autopilot start $name$outcome"
+      echo "failed  $ref_line (state ${state:-gone}, claude attach $id)" >>"$digest"
       break
     fi
     # A finished session holds ~300MB while idle and nothing is left to answer in it; blocked/HALTED ones stay for attach.
     claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"
+    $closed || echo "open    $ref_line" >>"$digest"
     notify "[done] ${label:0:80}: $((elapsed / 60))m$outcome"
   done
   rm -f "$st/running" "$st/loop"
+  if [[ -s $digest ]]; then notify "[summary] $name"$'\n'"$(cat "$digest")"; fi
+  rm -f "$digest"
 }
 
 cmd_start() {
@@ -313,7 +343,8 @@ cmd_add() {
     local labels=autopilot; [[ ${3:-} == --urgent ]] && labels+=,urgent
     # Launched issues are remembered across restarts so a job without its PR yet isn't launched twice; adding again means retry.
     sed -i "/^${what#\#}\$/d" "$st/taken"
-    (cd "$dir" && gh issue edit "${what#\#}" --add-label "$labels") >/dev/null && echo "labeled #${what#\#}: $labels"
+    echo "${what#\#}" >>"$st/resume"
+    (cd "$dir" && gh issue edit "${what#\#}" --add-label "$labels" --remove-label needs-answer) >/dev/null && echo "labeled #${what#\#}: $labels"
   else
     local id; id=$(date +%Y%m%d-%H%M%S)
     printf '%s\n' "$what" >"$st/queue/$id.prompt"
@@ -362,6 +393,7 @@ cmd_projects() {
       labels=$(cd "$dir" && gh label list --limit 200 --json name -q '.[].name' 2>&1)
       grep -qx autopilot <<<"$labels" || problems+=("no autopilot label")
       grep -qx urgent <<<"$labels" || problems+=("no urgent label")
+      grep -qx needs-answer <<<"$labels" || problems+=("no needs-answer label")
     fi
     if (( ${#problems[@]} )); then echo "$name  $dir  NOT READY: $(IFS=,; echo "${problems[*]}")"; else echo "$name  $dir  ready"; fi
   done
