@@ -235,6 +235,8 @@ cmd_loop() {
       notify "[HALTED] ${label:0:80}: state ${state:-gone} after $((elapsed / 60))m. Loop stopped; claude attach $id, then autopilot start $name$outcome"
       break
     fi
+    # A finished session holds ~300MB while idle and nothing is left to answer in it; blocked/HALTED ones stay for attach.
+    claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"
     notify "[done] ${label:0:80}: $((elapsed / 60))m$outcome"
   done
   rm -f "$st/running" "$st/loop"
