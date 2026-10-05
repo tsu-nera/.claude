@@ -178,7 +178,7 @@ cmd_loop() {
       continue
     fi
     local line kind ref rest prompt label id
-    line=$(plan "$name" "$urgent_only" | grep -m1 '^next ')
+    line=$(plan "$name" "$urgent_only" | grep -a -m1 '^next ')
     [[ -n "$line" ]] || { echo "$(now) queue empty"; break; }
     read -r _ kind ref rest <<<"$line"
     if [[ $kind == prompt ]]; then
