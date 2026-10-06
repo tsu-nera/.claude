@@ -52,6 +52,17 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/projects/.sync/memory-sync hook",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   },
   "statusLine": {
