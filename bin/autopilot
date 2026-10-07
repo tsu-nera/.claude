@@ -62,7 +62,11 @@ notify() {
 }
 # Also to #hitl: only for states the user has to act on (the autopilot channel is a log stream).
 # [needs-answer] is left out here: hitl-scan picks up the label itself.
-notify_hitl() { notify "$1"; "$HOME/.claude/bin/hitl" send "$1" || true; }
+# Args: tag, head (job label and issue/PR lines), what happened, what to decide, where to answer (empty: vaio-ops).
+notify_hitl() {
+  notify "[$1] $2"
+  "$HOME/.claude/bin/hitl" ask "$2" "$1: $3" "$4" "${5:-}" || true
+}
 # Issue state plus issue and linked PR URLs, one per line. URLs are wrapped in <> so Discord doesn't unfurl them.
 issue_outcome() {
   (cd "$1" && gh issue view "$2" --json url,state,closedByPullRequestsReferences \
@@ -94,6 +98,19 @@ repo_state() { local s=$STATE/${1##*/}; mkdir -p "$s/queue"; echo "$s"; }
 agents() { claude agents --json; }
 session_field() { agents | jq -r --arg id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]'; }
 busy_count() { agents | jq '[.[] | select(.status == "busy")] | length'; }
+# Remote Control URL of a session: where its question can be answered from the phone. Empty once the session is stopped.
+rc_url() { claude logs "$1" 2>/dev/null | grep -o 'https://claude.ai/code/session_[A-Za-z0-9]*' | tail -1; }
+# The transcript is named by the full session id, of which the agent id is the prefix; it stays after the session stops.
+transcript() { ls "$HOME"/.claude/projects/*/"$1"-*.jsonl 2>/dev/null | head -1; }
+# Last assistant turn with text, whitespace folded and cut to 300 chars, as "<api error kind or ->\t<text>".
+# Claude Code writes an API failure as a synthetic assistant turn flagged isApiErrorMessage.
+last_said() {
+  jq -r 'select(.type == "assistant")
+    | [(if .isApiErrorMessage then .error // "unknown" else "-" end),
+       ([.message.content[]? | select(.type == "text") | .text] | join(" ") | gsub("\\s+"; " ") | .[0:300])]
+    | select(.[1] != "") | @tsv' "$1" | tail -1
+}
+said() { local f; f=$(transcript "$1"); if [[ -n $f ]]; then last_said "$f" | cut -f2-; else echo "(transcript なし)"; fi; }
 
 # Check and launch share one lock, held until the new session shows as busy, so two loops can't both pass the check
 # before either session is counted. Prints the session id. Returns 1 when there is no room (retry later) and 2 when
@@ -222,7 +239,8 @@ cmd_loop() {
       (( rc == 0 )) && break
       if (( rc == 2 )); then
         end_loop "HALTED: could not launch $kind $ref (see the launch error above). Not launching more."
-        notify_hitl "[HALTED] ${label:0:80}: claude refused to launch (model ${MODEL:-default}). Loop stopped; see autopilot log for $name"
+        notify_hitl HALTED "${label:0:80}" "claude が起動を拒否した（model ${MODEL:-default}）。loop は止めた。$(grep -a 'launch failed' "$st/log" | tail -1 | cut -c1-200)" \
+          "原因（model・trust など）を直して autopilot start $name するか"
         break 2
       fi
       if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then end_loop "deadline reached"; break 2; fi
@@ -261,13 +279,15 @@ cmd_loop() {
     if ! $closed && [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
       echo "$(now) $kind $ref blocked on a question, skipping. answer: claude attach $id"
       record "blocked $ref_line (claude attach $id)"
-      notify_hitl "[blocked] ${label:0:80}: waiting for an answer, loop continues; claude attach $id$outcome"
+      notify_hitl blocked "${label:0:80}$outcome" "worker が入力待ちで止まった（loop は次へ進んでいる）。最後の発言: $(said "$id")" \
+        "worker の問いに答える" "$(rc_url "$id")"
       continue
     fi
     if ! $closed && { [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); }; then
       end_loop "HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
       echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
-      notify_hitl "[HALTED] ${label:0:80}: state ${state:-gone} after $((elapsed / 60))m. Loop stopped; claude attach $id, then autopilot start $name$outcome"
+      notify_hitl HALTED "${label:0:80}$outcome" "state ${state:-gone}、$((elapsed / 60))m で終わり loop は止めた。最後の発言: $(said "$id")" \
+        "原因を見て、続けるなら autopilot start $name" "$(rc_url "$id")"
       record "failed  $ref_line (state ${state:-gone}, claude attach $id)"
       break
     fi
@@ -427,7 +447,7 @@ cmd_projects() {
 cmd_status() {
   agents | jq -r --argjson now "$(date +%s)" '.[] | "\(.id)  \(.status)/\(.state // "-")  \((($now - .startedAt/1000) / 60 | floor))m  \(.name)"' \
     | while read -r id rest; do
-        url=$(claude logs "$id" 2>/dev/null | grep -o 'https://claude.ai/code/session_[A-Za-z0-9]*' | tail -1)
+        url=$(rc_url "$id")
         echo "$id  $rest  ${url:-}"
       done
 }
@@ -462,5 +482,6 @@ case "$cmd" in
   clean) cmd_clean ;;
   res) cmd_res ;;
   _loop) cmd_loop "$@" ;;
+  _last-said) last_said "$1" ;;
   *) sed -n '2,19p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

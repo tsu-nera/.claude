@@ -18,7 +18,7 @@ vaio が worker。`autopilot` CLI（`~/.claude/bin/autopilot`）は vaio 上で�
 
 対話セッションから積んだら、`autopilot watch <repo>` を `run_in_background` で張る。ジョブが blocked / needs-answer になるか、loop が理由を問わず止まると抜けるので、呼び戻されたらすぐ報告・対処できる。出力に止まり目が無ければ ssh が切れただけ（loop は vaio で走り続けている）なので張り直す。blocked で抜けた後も loop は続くので、答えたら watch を張り直す。
 
-blocked の質問が委任の範囲内（merge-gate の機械的な上限など）なら、自分で答えてから `autopilot start` し直す。範囲外ならユーザーに上げる。
+blocked の質問が委任の範囲内（merge-gate の機械的な上限など）なら、自分で答えてから `autopilot start` し直す。範囲外なら `hitl ask "<repo>#<番号> <題>" "<調べた結果>" "<選択肢と推奨>"` で #hitl に上げる（答える場所は既定で vaio-ops。ユーザーは外出先から答える前提で、文面だけで判断できるように書く）。
 
 ## キュー
 
@@ -49,8 +49,8 @@ autopilot status / clean / res
 - プロジェクトは `projects.conf` に定義する。追加したら vaio に clone・`~/.claude.json` で trust・`autopilot`/`urgent` ラベル作成が要る（`autopilot projects` で点検。未 trust だと background セッションが起動を拒否する）
 - memory は同期せず、worker は auto memory を切って起動する（`--settings`。bg daemon は呼び出し側の環境変数を渡さない）。worker は Issue 本文と repo の規約だけで動く（ready Issue は自己完結の粒度で書く）。残す知見は PR 本文に書かせ、mouse 側で拾う
 - skill や CLI の改訂は `~/.claude` を push してから届く（`start` が vaio で pull する）
-- 人の対応が要る通知は Discord の #hitl（`~/.claude/bin/hitl`）。`needs-answer` が付いた Issue / PR は `hitl-scan.timer` が5分ごとに拾って送り、`[blocked]`・`[HALTED]` は loop が直接送る。下の autopilot 用 webhook はログとして流すだけ
+- 人の対応が要る通知は Discord の #hitl（`~/.claude/bin/hitl`）。`needs-answer` が付いた Issue / PR は `hitl-scan.timer` が5分ごとに拾って送り、`[blocked]`・`[HALTED]` は loop が直接送る。どれも「何が起きた／決めること／答える場所（Remote Control の URL、既定は vaio 常駐の vaio-ops = `claude-rc-ops.service`。xchain-arb の障害対応用は別の xchain-ops）」の型（`hitl ask`）。下の autopilot 用 webhook はログとして流すだけ
 - Discord 通知はジョブの開始・完了（HALTED 含む）だけ。vaio の `~/.config/autopilot/discord-webhook`（git 外・chmod 600）に URL があれば送る。無ければ何もしない
 - 成功したセッション（done か Issue が PR で close 済み）は loop が `claude stop` する。blocked / HALTED は答えるために残る（1本 約300MB）。答え終えたものや loop の外で起動したものは `clean`
 - 起動前に statusline の使用率（`~/.cache/claude-rate-limits.json`）を見る。5h が90%以上なら reset まで待ち、週が98%以上なら止める（週は使い切る方針。余らせても reset で消える）
-- loop は、セッションが `done` 以外で止まるか3分未満で終わると HALTED を出して止まる（5時間枠の上限・エラーは次を起動しても同じ壁に当たるため）。`ls` の最終行で気づき、`claude attach <id>` で答えてから `start` し直す。`add` で積む短いプロンプトもこれに掛かる。例外: Issue が PR で close 済みなら state・経過時間に関わらず done 扱い、`blocked`（質問待ち）はその1本を飛ばして続ける（`[blocked]` 通知。答えた後の再実行は `autopilot add`）
+- loop は、セッションが `done` 以外で止まるか3分未満で終わると HALTED を出して止まる（5時間枠の上限・エラーは次を起動しても同じ壁に当たるため）。`ls` の最終行か #hitl で気づき、通知の Remote Control の URL（vaio の端末なら `claude attach <id>`）で答えてから `start` し直す。`add` で積む短いプロンプトもこれに掛かる。例外: Issue が PR で close 済みなら state・経過時間に関わらず done 扱い、`blocked`（質問待ち）はその1本を飛ばして続ける（`[blocked]` 通知。答えた後の再実行は `autopilot add`）
