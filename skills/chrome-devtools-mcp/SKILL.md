@@ -10,6 +10,9 @@ allowed-tools: Bash
 CachyOS にインストールした Chrome (`/usr/bin/google-chrome-stable`) を使い、ブラウザの操作・検査を行う。
 2つのモードが登録されており、用途に応じて使い分ける。
 
+ページの中身を読むだけなら `read-web` スキルを先に使う。この MCP は見た目の確認、
+コンソール・ネットワークのデバッグ、bot 検出で他の手段が空になるページ用。
+
 ## 2つのモード
 
 | サーバー名 | モード | 用途 |
@@ -73,7 +76,7 @@ mcp__chrome-gui__navigate_page(type="url", url="http://localhost:8080/page.html"
 ```
 
 2. コンテンツを取得:
-- `take_snapshot` — **テキスト取得（推奨）**。a11yツリーからページ内の全テキスト・リンク・要素をuid付きで取得
+- `take_snapshot` — 要素の uid を探すため。1ページで数万字になるので本文読みには使わず、文字は `evaluate_script` で必要な値だけ返す
 - `take_screenshot` — 画像で画面確認。レイアウトや視覚的な確認に
 
 3. 操作・デバッグ:
@@ -81,19 +84,6 @@ mcp__chrome-gui__navigate_page(type="url", url="http://localhost:8080/page.html"
 - `fill(uid="...", value="...")` — フォーム入力
 - `evaluate_script` — JavaScript 実行・値取得
 - `list_console_messages` — コンソールログ読取
-
-### 利用可能なツール
-
-各サーバーで同じツールが `mcp__chrome-devtools__*` / `mcp__chrome-gui__*` のプレフィックスで使える:
-
-- `navigate_page` — URL遷移、リロード、戻る/進む
-- `take_snapshot` — テキストスナップショット（a11yツリー）。uid付きで要素を特定できる
-- `take_screenshot` — 画像スクリーンショット。視覚確認用
-- `click` — snapshotのuidで要素クリック
-- `fill` — snapshotのuidでフォーム入力
-- `evaluate_script` — JavaScript 実行（値を返す）
-- `list_console_messages` — コンソールログ一覧
-- `list_network_requests` — ネットワークリクエスト一覧
 
 ## 実行手順（このスキルが呼ばれた時）
 
