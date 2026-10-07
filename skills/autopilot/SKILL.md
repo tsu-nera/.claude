@@ -16,11 +16,7 @@ vaio が worker。`autopilot` CLI（`~/.claude/bin/autopilot`）は vaio 上で�
 
 ユーザーが「mouse で」「vaio で」と言えばそれに従う。行き先は積んだ後に1行で報告する。
 
-対話セッションから積んだら、loop の止まり目を待つコマンドを `run_in_background` で張る（止まった時に自分が呼び戻され、すぐ報告・対処できる）:
-
-```bash
-ssh vaio 'L=~/.local/state/autopilot/<repo>/log; n=$(wc -l <$L); until tail -n +$((n+1)) $L | grep -aqE "blocked|HALTED|queue empty"; do sleep 30; done; tail -n +$((n+1)) $L'
-```
+対話セッションから積んだら、`autopilot watch <repo>` を `run_in_background` で張る。ジョブが blocked / needs-answer になるか、loop が理由を問わず止まると抜けるので、呼び戻されたらすぐ報告・対処できる。出力に止まり目が無ければ ssh が切れただけ（loop は vaio で走り続けている）なので張り直す。blocked で抜けた後も loop は続くので、答えたら watch を張り直す。
 
 blocked の質問が委任の範囲内（merge-gate の機械的な上限など）なら、自分で答えてから `autopilot start` し直す。範囲外ならユーザーに上げる。
 
@@ -39,11 +35,12 @@ autopilot start xchain-arb --until 07:00       # 木金の深夜: 期限後は�
 autopilot start all --5h-max 60                # 5h 枠を 60% で止め、残りを対話用に残す（reset 後は再開）
 autopilot stop xchain-arb                      # loop を止める（起動済みは走り続ける。start し直すと実行中の1本を待ってから続ける）
 autopilot pause all / resume all              # loop を生かしたまま新規起動だけ止める / 再開する
+autopilot watch xchain-arb                     # 止まり目まで待つ（run_in_background 用）
 autopilot projects                             # 定義済みプロジェクトと vaio 側の準備状況
 autopilot status / clean / res
 ```
 
-ラベルの Issue は常に `/issue-to-merge` で merge まで進む。merge 前に人の判断が要るもの（merge 後に deploy して観察する等）はラベルを付けず、`autopilot add <repo> "/issue-to-pr <番号>"` で積む。モデルは settings.json の既定（opus[1m]）で、`--model sonnet` で loop ごとに変えられる。ログは vaio の `~/.local/state/autopilot/<repo>/log`。
+ラベルの Issue は常に `/issue-to-merge` で merge まで進む。merge 前に人の判断が要るもの（merge 後に deploy して観察する等）はラベルを付けず、`autopilot add <repo> "/issue-to-pr <番号>"` で積む。モデルは settings.json の既定（opus[1m]）で、`--model sonnet` で loop ごとに変えられる。ログは vaio の `~/.local/state/autopilot/<repo>/log`、ジョブごとの結果は同じ場所の `history`、loop が止まった理由は `last-exit`（`ls` にも出る）。
 
 ## 落とし穴
 
