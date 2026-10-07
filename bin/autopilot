@@ -59,6 +59,9 @@ notify() {
   jq -n --arg c "$1" '{content: $c}' | curl -fsS -m 10 -H 'Content-Type: application/json' -d @- "$(cat "$WEBHOOK_FILE")" >/dev/null \
     || echo "$(now) warning: discord notify failed" >&2
 }
+# Also to #hitl: only for states the user has to act on (the autopilot channel is a log stream).
+# [needs-answer] is left out here: hitl-scan picks up the label itself.
+notify_hitl() { notify "$1"; "$HOME/.claude/bin/hitl" send "$1" || true; }
 # Issue state plus issue and linked PR URLs, one per line. URLs are wrapped in <> so Discord doesn't unfurl them.
 issue_outcome() {
   (cd "$1" && gh issue view "$2" --json url,state,closedByPullRequestsReferences \
@@ -217,7 +220,7 @@ cmd_loop() {
       (( rc == 0 )) && break
       if (( rc == 2 )); then
         end_loop "HALTED: could not launch $kind $ref (see the launch error above). Not launching more."
-        notify "[HALTED] ${label:0:80}: claude refused to launch (model ${MODEL:-default}). Loop stopped; see autopilot log for $name"
+        notify_hitl "[HALTED] ${label:0:80}: claude refused to launch (model ${MODEL:-default}). Loop stopped; see autopilot log for $name"
         break 2
       fi
       if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then end_loop "deadline reached"; break 2; fi
@@ -256,13 +259,13 @@ cmd_loop() {
     if ! $closed && [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
       echo "$(now) $kind $ref blocked on a question, skipping. answer: claude attach $id"
       record "blocked $ref_line (claude attach $id)"
-      notify "[blocked] ${label:0:80}: waiting for an answer, loop continues; claude attach $id$outcome"
+      notify_hitl "[blocked] ${label:0:80}: waiting for an answer, loop continues; claude attach $id$outcome"
       continue
     fi
     if ! $closed && { [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); }; then
       end_loop "HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
       echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
-      notify "[HALTED] ${label:0:80}: state ${state:-gone} after $((elapsed / 60))m. Loop stopped; claude attach $id, then autopilot start $name$outcome"
+      notify_hitl "[HALTED] ${label:0:80}: state ${state:-gone} after $((elapsed / 60))m. Loop stopped; claude attach $id, then autopilot start $name$outcome"
       record "failed  $ref_line (state ${state:-gone}, claude attach $id)"
       break
     fi

@@ -1,0 +1,6 @@
+[Unit]
+Description=Notify Discord #hitl of issues/PRs that newly need an answer
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -lc '%h/.claude/bin/hitl scan'
