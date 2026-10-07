@@ -54,3 +54,6 @@ CLAUDE.local.md
 # claude.ai から同期されるスキル・Claude Code の内部状態（自動生成）
 skills/synced/
 state/
+
+# Claude in Chrome のネイティブホスト（マシン固有）
+chrome/
