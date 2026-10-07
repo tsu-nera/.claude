@@ -49,6 +49,7 @@ autopilot status / clean / res
 - プロジェクトは `projects.conf` に定義する。追加したら vaio に clone・`~/.claude.json` で trust・`autopilot`/`urgent` ラベル作成が要る（`autopilot projects` で点検。未 trust だと background セッションが起動を拒否する）
 - memory は同期せず、worker は auto memory を切って起動する（`--settings`。bg daemon は呼び出し側の環境変数を渡さない）。worker は Issue 本文と repo の規約だけで動く（ready Issue は自己完結の粒度で書く）。残す知見は PR 本文に書かせ、mouse 側で拾う
 - skill や CLI の改訂は `~/.claude` を push してから届く（`start` が vaio で pull する）
+- 人の対応が要る通知は Discord の #hitl（`~/.claude/bin/hitl`）。`needs-answer` が付いた Issue / PR は `hitl-scan.timer` が5分ごとに拾って送り、`[blocked]`・`[HALTED]` は loop が直接送る。下の autopilot 用 webhook はログとして流すだけ
 - Discord 通知はジョブの開始・完了（HALTED 含む）だけ。vaio の `~/.config/autopilot/discord-webhook`（git 外・chmod 600）に URL があれば送る。無ければ何もしない
 - 成功したセッション（done か Issue が PR で close 済み）は loop が `claude stop` する。blocked / HALTED は答えるために残る（1本 約300MB）。答え終えたものや loop の外で起動したものは `clean`
 - 起動前に statusline の使用率（`~/.cache/claude-rate-limits.json`）を見る。5h が90%以上なら reset まで待ち、週が98%以上なら止める（週は使い切る方針。余らせても reset で消える）
