@@ -79,7 +79,10 @@ cmd_start() {
     "$project" "$to" "$for" "$every" "$summary" "$*" "$dry" "$(date '+%F %T')" > "$STATE/$unit/meta"
 
   # KillMode=mixed: `stop` sends TERM to the supervisor only, so it can stop the job and still post the final comment.
+  # Lowest priority on the worker: under contention these jobs slow down (CPU share, memory reclaimed to swap first)
+  # instead of starving autopilot sessions and nightly batches, however many of them pile up.
   systemd-run --user --unit="$unit" --collect -p KillMode=mixed -p TimeoutStopSec=90 \
+    -p CPUWeight=20 -p MemoryHigh=512M \
     bash -lc "exec $(printf '%q ' "$SELF" _supervise "$unit")" >/dev/null 2>&1 || die "systemd-run failed"
   echo "$unit"
   echo "started on $(hostname)${dry:+ (dry: comments go to $STATE/$unit/comments.md)}: for $for${every:+, every $every}"
