@@ -12,6 +12,7 @@
 #                                                    work through the repo's queue in tmux, one job at a time
 #   autopilot stop <repo|all>                        stop launching more (running sessions keep going)
 #   autopilot pause <repo|all> / resume <repo|all>   hold / release new launches; the loop and its running job stay
+#   autopilot watch <repo>                           block until a job is blocked / needs an answer or the loop ends
 #   autopilot projects                               defined projects and whether each is ready on the worker
 #   autopilot status                                 background sessions with state and Remote Control URL
 #   autopilot clean                                  stop idle sessions (they keep ~300MB each until stopped)
@@ -169,6 +170,9 @@ cmd_loop() {
   touch "$st/taken"
   # Read once when the loop ends: the jobs run overnight, so one summary in the morning beats a notification per job.
   local digest; digest=$(mktemp)
+  # Outcomes also go to history and the stop reason to last-exit, so `ls` and `watch` can tell what happened after the fact.
+  record() { echo "$1" >>"$digest"; echo "$(date '+%F %H:%M') $1" >>"$st/history"; }
+  end_loop() { echo "$(now) $1"; echo "$(date '+%F %H:%M') $1" >"$st/last-exit"; }
   # A job launched by an earlier loop (stopped, then started again) still counts as ours: run after it, not beside it.
   if [[ -f $st/running ]]; then
     local prev_kind prev_ref prev_id; read -r prev_kind prev_ref prev_id <"$st/running"
@@ -179,11 +183,11 @@ cmd_loop() {
     rm -f "$st/running"
   fi
   while :; do
-    if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break; fi
+    if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then end_loop "deadline reached"; break; fi
     if [[ -f $st/paused ]]; then
       echo "$(now) paused"
       while [[ -f $st/paused ]]; do
-        if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break 2; fi
+        if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then end_loop "deadline reached"; break 2; fi
         sleep 30
       done
       echo "$(now) resumed"
@@ -191,7 +195,7 @@ cmd_loop() {
     fi
     local line kind ref rest prompt label id
     line=$(plan "$name" "$urgent_only" | grep -a -m1 '^next ')
-    [[ -n "$line" ]] || { echo "$(now) queue empty"; break; }
+    [[ -n "$line" ]] || { end_loop "queue empty"; break; }
     read -r _ kind ref rest <<<"$line"
     if [[ $kind == prompt ]]; then
       prompt=$(cat "$st/queue/$ref.prompt"); label="$name ${prompt%%$'\n'*}"
@@ -200,9 +204,9 @@ cmd_loop() {
     fi
     local gate verdict until_epoch
     gate=$(usage_gate); read -r verdict until_epoch _ <<<"$gate"
-    if [[ $verdict == halt ]]; then echo "$(now) HALTED: ${gate#halt }"; break; fi
+    if [[ $verdict == halt ]]; then end_loop "HALTED: ${gate#halt }"; break; fi
     if [[ $verdict == wait ]]; then
-      if [[ -n "$deadline" ]] && (( until_epoch >= deadline )); then echo "$(now) ${gate#wait * }, resets after the deadline; stopping"; break; fi
+      if [[ -n "$deadline" ]] && (( until_epoch >= deadline )); then end_loop "${gate#wait * }, resets after the deadline; stopping"; break; fi
       echo "$(now) waiting until $(date -d "@$until_epoch" +%H:%M): ${gate#wait * }"
       sleep $(( until_epoch - $(date +%s) + 60 ))
       continue
@@ -212,11 +216,11 @@ cmd_loop() {
       id=$(try_launch "$dir" "$prompt" "${label:0:80}"); rc=$?
       (( rc == 0 )) && break
       if (( rc == 2 )); then
-        echo "$(now) HALTED: could not launch $kind $ref (see the launch error above). Not launching more."
+        end_loop "HALTED: could not launch $kind $ref (see the launch error above). Not launching more."
         notify "[HALTED] ${label:0:80}: claude refused to launch (model ${MODEL:-default}). Loop stopped; see autopilot log for $name"
         break 2
       fi
-      if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then echo "$(now) deadline reached"; break 2; fi
+      if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then end_loop "deadline reached"; break 2; fi
       sleep 60
     done
     if [[ $kind == prompt ]]; then mkdir -p "$st/done"; mv "$st/queue/$ref.prompt" "$st/done/"; else echo "$ref" >>"$st/taken"; sed -i "/^${ref}\$/d" "$st/resume" 2>/dev/null; fi
@@ -238,12 +242,12 @@ cmd_loop() {
     local ref_line="${label:0:80}${issue:+ <$(issue_url "$dir" "$issue")>}"
     if $closed; then
       local decided=""; issue_has_decision "$dir" "$issue" && decided=" (agent decided: see 追加決定)"
-      echo "merged  $ref_line$decided" >>"$digest"
+      record "merged  $ref_line$decided"
     fi
     # The worker hands a question back through the issue and exits, so the session holds nothing worth keeping.
     if ! $closed && [[ -n $issue ]] && issue_has_label "$dir" "$issue" needs-answer; then
       echo "$(now) $kind $ref needs an answer on the issue, skipping"
-      echo "answer  $ref_line" >>"$digest"
+      record "answer  $ref_line"
       claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"
       notify "[needs-answer] ${label:0:80}: answer on the issue, then autopilot add$outcome"
       continue
@@ -251,20 +255,20 @@ cmd_loop() {
     # A question is about this issue only; the next one won't hit the same wall. `taken` keeps it out of the next plan.
     if ! $closed && [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
       echo "$(now) $kind $ref blocked on a question, skipping. answer: claude attach $id"
-      echo "blocked $ref_line (claude attach $id)" >>"$digest"
+      record "blocked $ref_line (claude attach $id)"
       notify "[blocked] ${label:0:80}: waiting for an answer, loop continues; claude attach $id$outcome"
       continue
     fi
     if ! $closed && { [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); }; then
-      echo "$(now) HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
+      end_loop "HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
       echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
       notify "[HALTED] ${label:0:80}: state ${state:-gone} after $((elapsed / 60))m. Loop stopped; claude attach $id, then autopilot start $name$outcome"
-      echo "failed  $ref_line (state ${state:-gone}, claude attach $id)" >>"$digest"
+      record "failed  $ref_line (state ${state:-gone}, claude attach $id)"
       break
     fi
     # A finished session holds ~300MB while idle and nothing is left to answer in it; blocked/HALTED ones stay for attach.
     claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"
-    $closed || echo "open    $ref_line" >>"$digest"
+    $closed || record "open    $ref_line"
     notify "[done] ${label:0:80}: $((elapsed / 60))m$outcome"
   done
   rm -f "$st/running" "$st/loop"
@@ -317,6 +321,7 @@ cmd_stop() {
   fi
   tmux kill-session -t "autopilot-$name" || die "no loop running for $name"
   rm -f "$STATE/$name/loop"
+  echo "$(date '+%F %H:%M') stopped by autopilot stop" >"$STATE/$name/last-exit"
   echo "stopped autopilot-$name (sessions it launched keep running; see autopilot status)"
 }
 
@@ -372,7 +377,7 @@ cmd_ls() {
     if tmux has-session -t "autopilot-$name" 2>/dev/null; then
       echo "== $name  loop: $([[ -f $st/paused ]] && echo "PAUSED, ")$(cat "$st/loop" 2>/dev/null)  last: $(tail -1 "$st/log" 2>/dev/null)"
     else
-      echo "== $name  loop: stopped$([[ -f $st/paused ]] && echo " (paused: start will hold until resume)")"
+      echo "== $name  loop: stopped$([[ -f $st/paused ]] && echo " (paused: start will hold until resume)")  last: $(cat "$st/last-exit" 2>/dev/null || echo -)"
     fi
     if [[ -f $st/running ]]; then
       local kind ref id; read -r kind ref id <"$st/running"
@@ -380,6 +385,21 @@ cmd_ls() {
     fi
     plan "$name" | sed 's/^/  /'
   done
+}
+
+# Blocks until the loop needs someone: a job blocked or handed back a question, or the loop ended for any reason.
+# The tmux session is the liveness signal, so a killed loop ends the watch too. Meant for run_in_background from mouse.
+cmd_watch() {
+  local name=${1:?usage: autopilot watch <repo>} st seen; name=${name##*/}
+  repo_dir "$name" >/dev/null; st=$(repo_state "$name")
+  touch "$st/history"; seen=$(wc -l <"$st/history")
+  tmux has-session -t "autopilot-$name" 2>/dev/null || die "no loop running for $name (last: $(cat "$st/last-exit" 2>/dev/null || echo -))"
+  while tmux has-session -t "autopilot-$name" 2>/dev/null; do
+    tail -n +$((seen + 1)) "$st/history" | grep -qE '^\S+ \S+ (blocked|answer) ' && break
+    sleep 30
+  done
+  tail -n +$((seen + 1)) "$st/history"
+  tmux has-session -t "autopilot-$name" 2>/dev/null && echo "loop: running" || echo "loop ended: $(cat "$st/last-exit" 2>/dev/null || echo -)"
 }
 
 cmd_projects() {
@@ -431,10 +451,11 @@ case "$cmd" in
   stop) cmd_stop "$@" ;;
   pause) cmd_pause "$@" ;;
   resume) cmd_resume "$@" ;;
+  watch) cmd_watch "$@" ;;
   projects) cmd_projects ;;
   status) cmd_status ;;
   clean) cmd_clean ;;
   res) cmd_res ;;
   _loop) cmd_loop "$@" ;;
-  *) sed -n '2,18p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,19p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
