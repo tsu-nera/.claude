@@ -52,6 +52,7 @@ WORKER_NOTE='このセッションは無人の worker で、確認できる人�
 外部イベント（他人の tx・定期 job など）の到来を待つ検証は10分で打ち切り、PR 本文の「未実施」に理由と後で確かめる手順を書いて先へ進む。
 設計の不足や Issue の前提の誤りが見つかっても止まらない。/issue-to-merge の「AC 改訂」に従い、決定を Issue 本文の「## 追加決定」に書いてから merge まで進める。
 人の判断が要る時（SPLIT_NEEDED・merge-gate が要人間・上の取り消せない操作が要る・要件が読めない）も入力待ちで止まらない。PR は残し、Issue に選択肢と推奨を添えて質問をコメントし、`gh issue edit <番号> --add-label needs-answer --remove-label autopilot --remove-label urgent` を実行して終了する。朝まで答える人はいない。人が Issue のコメントで答えて `autopilot add` で積み直すと、既存の PR から再開される。'
+WORKER_SETTINGS='{"autoMemoryEnabled": false, "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "~/.claude/hooks/deny-unguarded-rm-var.sh"}]}]}}'
 
 die() { echo "autopilot: $*" >&2; exit 1; }
 notify() {
@@ -114,7 +115,8 @@ try_launch() {
     local model_args=(); [[ -n $MODEL ]] && model_args=(--model "$MODEL")
     # Workers run on the issue and the repo rules, not on memory (about 9k tokens re-read every turn). An env var
     # would not reach the session: the bg daemon does not pass the caller's environment through, flags it keeps.
-    (cd "$dir" && claude --bg "${model_args[@]}" --settings '{"autoMemoryEnabled": false}' \
+    # The hook turns prompts that bypass mode still raises into denials the agent can act on (a prompt hangs a worker).
+    (cd "$dir" && claude --bg "${model_args[@]}" --settings "$WORKER_SETTINGS" \
       --name "$name" --remote-control "$name" --permission-mode bypassPermissions \
       --append-system-prompt "$WORKER_NOTE" "$prompt") >"$out" 2>&1 </dev/null
     local id; id=$(grep -o 'backgrounded · [0-9a-f]*' "$out" | awk '{print $3}')
