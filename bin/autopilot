@@ -12,7 +12,7 @@
 #                                                    work through the repo's queue in tmux, one job at a time
 #   autopilot stop <repo|all>                        stop launching more (running sessions keep going)
 #   autopilot pause <repo|all> / resume <repo|all>   hold / release new launches; the loop and its running job stay
-#   autopilot watch <repo>                           block until a job is blocked / needs an answer or the loop ends
+#   autopilot watch <repo>                           block until a job is blocked / needs an answer / failed or the loop ends
 #   autopilot projects                               defined projects and whether each is ready on the worker
 #   autopilot status                                 background sessions with state and Remote Control URL
 #   autopilot clean                                  stop idle sessions (they keep ~300MB each until stopped)
@@ -20,7 +20,11 @@
 set -uo pipefail
 
 HOST=vaio
+WATCH_POLL=${AUTOPILOT_WATCH_POLL:-30}
+source "$(dirname "$(realpath "$0")")/lib/autopilot-notify.sh"
+
 if [[ "$(hostname)" != ${HOST}* ]]; then
+  if [[ ${1:-} == watch ]]; then shift; cmd_watch "$@"; exit; fi
   tty=(); [[ -t 0 ]] && tty=(-t)
   exec ssh "${tty[@]}" "$HOST" "bash -lc $(printf %q "$(printf '%q ' autopilot "$@")")"
 fi
@@ -33,6 +37,11 @@ MIN_AVAIL_MB=2500
 # A job that goes idle sooner than this, or not in state done, most likely hit the 5-hour limit or an error.
 # Launching the next one would hit the same wall, so the loop halts instead of burning through the queue.
 MIN_JOB_SECONDS=180
+# A job that ends on an API error (outage, overload) is queued again after these waits, one per consecutive failure across
+# the loop: an outage hits every job alike. One more failure past the list halts the loop.
+API_RETRY_WAITS=(600 1800)
+# How long a job that needs someone waits for a watcher to pick it up before it goes to #hitl (a watch polls every 30s).
+ACK_WAIT=${AUTOPILOT_ACK_WAIT:-120}
 # Usage written by statusline-command.sh, which also renders inside the worker's background sessions.
 # At the 5-hour cap the loop waits for the reset; at the weekly cap it stops, since that reset is days out.
 # The weekly cap is the real limit on purpose: unused weekly quota is lost at the reset.
@@ -55,18 +64,6 @@ WORKER_NOTE='このセッションは無人の worker で、確認できる人�
 WORKER_SETTINGS='{"autoMemoryEnabled": false, "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "~/.claude/hooks/deny-unguarded-rm-var.sh"}]}]}}'
 
 die() { echo "autopilot: $*" >&2; exit 1; }
-notify() {
-  [[ -s $WEBHOOK_FILE ]] || return 0
-  jq -n --arg c "$1" '{content: $c}' | curl -fsS -m 10 -H 'Content-Type: application/json' -d @- "$(cat "$WEBHOOK_FILE")" >/dev/null \
-    || echo "$(now) warning: discord notify failed" >&2
-}
-# Also to #hitl: only for states the user has to act on (the autopilot channel is a log stream).
-# [needs-answer] is left out here: hitl-scan picks up the label itself.
-# Args: tag, head (job label and issue/PR lines), what happened, what to decide, where to answer (empty: vaio-ops).
-notify_hitl() {
-  notify "[$1] $2"
-  "$HOME/.claude/bin/hitl" ask "$2" "$1: $3" "$4" "${5:-}" || true
-}
 # Issue state plus issue and linked PR URLs, one per line. URLs are wrapped in <> so Discord doesn't unfurl them.
 issue_outcome() {
   (cd "$1" && gh issue view "$2" --json url,state,closedByPullRequestsReferences \
@@ -86,6 +83,16 @@ issue_closed_by_pr() {
 # Issue number a job works on: the issue itself, or the one named in a queued "/issue-to-merge 3995 ..." prompt.
 job_issue() { if [[ $1 == issue ]]; then echo "$2"; else grep -oP '/issue-to-(merge|pr)\s+#?\K[0-9]+' <<<"$3" | head -1; fi; }
 now() { date +%H:%M; }
+# Seconds to wait before relaunching after the given API error kind and count of them in a row; nothing means halt.
+# Only an outage passes with time; any other kind (model_not_found, ...) fails the same way on every retry.
+api_retry_wait() {
+  [[ $1 =~ ^(server_error|overloaded|rate_limit|unknown) ]] && (( $2 <= ${#API_RETRY_WAITS[@]} )) && echo "${API_RETRY_WAITS[$2 - 1]}"
+}
+# Put a launched job back in the queue as `add` would, minus the labels it still carries. Uses $st from the loop.
+requeue() {
+  if [[ $1 == prompt ]]; then mv "$st/done/$2.prompt" "$st/queue/"
+  else sed -i "/^$2\$/d" "$st/taken"; echo "$2" >>"$st/resume"; fi
+}
 project_names() { grep -v '^\s*#' "$PROJECTS_CONF" | awk 'NF {print $1}'; }
 project_path() { local p; p=$(awk -v n="$1" '$1 == n {print $2}' "$PROJECTS_CONF"); echo "${p/#\~/$HOME}"; }
 repo_dir() {
@@ -98,20 +105,6 @@ repo_state() { local s=$STATE/${1##*/}; mkdir -p "$s/queue"; echo "$s"; }
 agents() { claude agents --json; }
 session_field() { agents | jq -r --arg id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]'; }
 busy_count() { agents | jq '[.[] | select(.status == "busy")] | length'; }
-# Remote Control URL of a session: where its question can be answered from the phone. Empty once the session is stopped.
-rc_url() { claude logs "$1" 2>/dev/null | grep -o 'https://claude.ai/code/session_[A-Za-z0-9]*' | tail -1; }
-# The transcript is named by the full session id, of which the agent id is the prefix; it stays after the session stops.
-transcript() { ls "$HOME"/.claude/projects/*/"$1"-*.jsonl 2>/dev/null | head -1; }
-# Last assistant turn with text, whitespace folded and cut to 300 chars, as "<api error kind or ->\t<text>".
-# Claude Code writes an API failure as a synthetic assistant turn flagged isApiErrorMessage.
-last_said() {
-  jq -r 'select(.type == "assistant")
-    | [(if .isApiErrorMessage then .error // "unknown" else "-" end),
-       ([.message.content[]? | select(.type == "text") | .text] | join(" ") | gsub("\\s+"; " ") | .[0:300])]
-    | select(.[1] != "") | @tsv' "$1" | tail -1
-}
-said() { local f; f=$(transcript "$1"); if [[ -n $f ]]; then last_said "$f" | cut -f2-; else echo "(transcript なし)"; fi; }
-
 # Check and launch share one lock, held until the new session shows as busy, so two loops can't both pass the check
 # before either session is counted. Prints the session id. Returns 1 when there is no room (retry later) and 2 when
 # claude itself refused to launch (retrying would fail the same way), with the reason on stderr.
@@ -189,7 +182,8 @@ cmd_loop() {
   local name=$1 urgent_only=$2 deadline=$3 skill=$4 st dir
   FIVE_HOUR_MAX=$5 MODEL=${6:-}
   st=$(repo_state "$name"); dir=$(repo_dir "$name")
-  touch "$st/taken"
+  touch "$st/taken" "$st/history"
+  local api_failures=0
   # Read once when the loop ends: the jobs run overnight, so one summary in the morning beats a notification per job.
   local digest; digest=$(mktemp)
   # Outcomes also go to history and the stop reason to last-exit, so `ls` and `watch` can tell what happened after the fact.
@@ -239,6 +233,7 @@ cmd_loop() {
       (( rc == 0 )) && break
       if (( rc == 2 )); then
         end_loop "HALTED: could not launch $kind $ref (see the launch error above). Not launching more."
+        record "failed  ${label:0:80} (claude refused to launch)"
         notify_hitl HALTED "${label:0:80}" "claude が起動を拒否した（model ${MODEL:-default}）。loop は止めた。$(grep -a 'launch failed' "$st/log" | tail -1 | cut -c1-200)" \
           "原因（model・trust など）を直して autopilot start $name するか"
         break 2
@@ -275,10 +270,31 @@ cmd_loop() {
       notify "[needs-answer] ${label:0:80}: answer on the issue, then autopilot add$outcome"
       continue
     fi
+    # An API error is written as an ordinary assistant turn, so the session reads as blocked or done like a question would.
+    local tf api_error=""; tf=$(transcript "$id"); [[ -n $tf ]] && api_error=$(last_said "$tf" | cut -f1)
+    if ! $closed && [[ -n $api_error && $api_error != - ]]; then
+      claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"
+      requeue "$kind" "$ref"
+      api_failures=$(( api_failures + 1 ))
+      local retry_in; retry_in=$(api_retry_wait "$api_error" "$api_failures")
+      if [[ -n $retry_in ]]; then
+        echo "$(now) $kind $ref hit an API error ($api_error), queued again; next launch in $((retry_in / 60))m"
+        record "retry   $ref_line (API $api_error, $api_failures in a row)"
+        notify "[retry] ${label:0:80}: API $api_error, queued again in $((retry_in / 60))m"
+        sleep "$retry_in"
+        continue
+      fi
+      end_loop "HALTED: $kind $ref hit an API error ($api_error, $api_failures in a row). Queued again; not launching more."
+      record "failed  $ref_line (API $api_error, $api_failures in a row)"
+      notify_hitl HALTED "${label:0:80}$outcome" "API エラー（$api_error）が $api_failures 回続いたので loop は止めた。ジョブは積み直してある。最後の発言: $(said "$id")" \
+        "API の復旧（または設定）を確かめて autopilot start $name"
+      break
+    fi
     # A question is about this issue only; the next one won't hit the same wall. `taken` keeps it out of the next plan.
     if ! $closed && [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
       echo "$(now) $kind $ref blocked on a question, skipping. answer: claude attach $id"
       record "blocked $ref_line (claude attach $id)"
+      api_failures=0
       notify_hitl blocked "${label:0:80}$outcome" "worker が入力待ちで止まった（loop は次へ進んでいる）。最後の発言: $(said "$id")" \
         "worker の問いに答える" "$(rc_url "$id")"
       continue
@@ -286,14 +302,15 @@ cmd_loop() {
     if ! $closed && { [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); }; then
       end_loop "HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
       echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
+      record "failed  $ref_line (state ${state:-gone}, claude attach $id)"
       notify_hitl HALTED "${label:0:80}$outcome" "state ${state:-gone}、$((elapsed / 60))m で終わり loop は止めた。最後の発言: $(said "$id")" \
         "原因を見て、続けるなら autopilot start $name" "$(rc_url "$id")"
-      record "failed  $ref_line (state ${state:-gone}, claude attach $id)"
       break
     fi
     # A finished session holds ~300MB while idle and nothing is left to answer in it; blocked/HALTED ones stay for attach.
     claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"
     $closed || record "open    $ref_line"
+    api_failures=0
     notify "[done] ${label:0:80}: $((elapsed / 60))m$outcome"
   done
   rm -f "$st/running" "$st/loop"
@@ -412,21 +429,6 @@ cmd_ls() {
   done
 }
 
-# Blocks until the loop needs someone: a job blocked or handed back a question, or the loop ended for any reason.
-# The tmux session is the liveness signal, so a killed loop ends the watch too. Meant for run_in_background from mouse.
-cmd_watch() {
-  local name=${1:?usage: autopilot watch <repo>} st seen; name=${name##*/}
-  repo_dir "$name" >/dev/null; st=$(repo_state "$name")
-  touch "$st/history"; seen=$(wc -l <"$st/history")
-  tmux has-session -t "autopilot-$name" 2>/dev/null || die "no loop running for $name (last: $(cat "$st/last-exit" 2>/dev/null || echo -))"
-  while tmux has-session -t "autopilot-$name" 2>/dev/null; do
-    tail -n +$((seen + 1)) "$st/history" | grep -qE '^\S+ \S+ (blocked|answer) ' && break
-    sleep 30
-  done
-  tail -n +$((seen + 1)) "$st/history"
-  tmux has-session -t "autopilot-$name" 2>/dev/null && echo "loop: running" || echo "loop ended: $(cat "$st/last-exit" 2>/dev/null || echo -)"
-}
-
 cmd_projects() {
   local name dir problems labels
   for name in $(project_names); do
@@ -477,6 +479,9 @@ case "$cmd" in
   pause) cmd_pause "$@" ;;
   resume) cmd_resume "$@" ;;
   watch) cmd_watch "$@" ;;
+  _watch-tick) cmd_watch_tick "$@" ;;
+  _escalate) cmd_escalate "$@" ;;
+  _api-retry-wait) api_retry_wait "$@" ;;
   projects) cmd_projects ;;
   status) cmd_status ;;
   clean) cmd_clean ;;

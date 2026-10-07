@@ -16,7 +16,7 @@ vaio が worker。`autopilot` CLI（`~/.claude/bin/autopilot`）は vaio 上で�
 
 ユーザーが「mouse で」「vaio で」と言えばそれに従う。行き先は積んだ後に1行で報告する。
 
-対話セッションから積んだら、`autopilot watch <repo>` を `run_in_background` で張る。ジョブが blocked / needs-answer になるか、loop が理由を問わず止まると抜けるので、呼び戻されたらすぐ報告・対処できる。出力に止まり目が無ければ ssh が切れただけ（loop は vaio で走り続けている）なので張り直す。blocked で抜けた後も loop は続くので、答えたら watch を張り直す。
+対話セッションから積んだら、`autopilot watch <repo>` を `run_in_background` で張る。ジョブが blocked / needs-answer / failed になるか、loop が理由を問わず止まると抜けるので、呼び戻されたらすぐ報告・対処できる。watch は mouse から30秒ごとに vaio を見に行き、受け取った止まり目に ack を付ける。ack の付いた止まり目は #hitl に送られず、2分以内に誰も受け取らなかったものだけが #hitl に行く（mouse のスリープ・セッション終了も同じ扱い）。抜けた後も loop が続いているなら張り直す（張っていない間の止まり目は #hitl に行く）。
 
 blocked の質問が委任の範囲内（merge-gate の機械的な上限など）なら、自分で答えてから `autopilot start` し直す。範囲外なら `hitl ask "<repo>#<番号> <題>" "<調べた結果>" "<選択肢と推奨>"` で #hitl に上げる（答える場所は既定で vaio-ops。ユーザーは外出先から答える前提で、文面だけで判断できるように書く）。
 
@@ -53,4 +53,5 @@ autopilot status / clean / res
 - Discord 通知はジョブの開始・完了（HALTED 含む）だけ。vaio の `~/.config/autopilot/discord-webhook`（git 外・chmod 600）に URL があれば送る。無ければ何もしない
 - 成功したセッション（done か Issue が PR で close 済み）は loop が `claude stop` する。blocked / HALTED は答えるために残る（1本 約300MB）。答え終えたものや loop の外で起動したものは `clean`
 - 起動前に statusline の使用率（`~/.cache/claude-rate-limits.json`）を見る。5h が90%以上なら reset まで待ち、週が98%以上なら止める（週は使い切る方針。余らせても reset で消える）
+- 最後の発言が API エラー（transcript の `isApiErrorMessage`）で終わったジョブは質問扱いせず、積み直して 10分→30分待って再起動する（回数は loop 単位で連続を数える。障害は全ジョブに同時に出るため）。3回目、または `model_not_found` のような待っても直らない種類なら HALTED
 - loop は、セッションが `done` 以外で止まるか3分未満で終わると HALTED を出して止まる（5時間枠の上限・エラーは次を起動しても同じ壁に当たるため）。`ls` の最終行か #hitl で気づき、通知の Remote Control の URL（vaio の端末なら `claude attach <id>`）で答えてから `start` し直す。`add` で積む短いプロンプトもこれに掛かる。例外: Issue が PR で close 済みなら state・経過時間に関わらず done 扱い、`blocked`（質問待ち）はその1本を飛ばして続ける（`[blocked]` 通知。答えた後の再実行は `autopilot add`）
