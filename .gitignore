@@ -50,3 +50,7 @@ plugins/
 
 ## マシン固有 CLAUDE（各マシンで用意・未コミット）
 CLAUDE.local.md
+
+# claude.ai から同期されるスキル・Claude Code の内部状態（自動生成）
+skills/synced/
+state/
