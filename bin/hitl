@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Human-in-the-loop notifications: post to the Discord #hitl channel only when the user has to act.
 # (The autopilot webhook is a log stream nobody watches; this channel stays quiet unless something waits on a human.)
-#   hitl send <text>   post one message
-#   hitl scan          notify issues/PRs that newly got the needs-answer label, across the projects in autopilot's projects.conf
+#   hitl send <text>                             post one message
+#   hitl ask <head> <what> <decide> [<answer-url>]
+#                                                ask for a decision: what happened, what to decide, where to answer.
+#                                                Without <answer-url> it points at the vaio-ops Remote Control server.
+#   hitl scan                                    notify issues/PRs that newly got the needs-answer label, across the projects in autopilot's projects.conf
 # Runs on the worker host (vaio); off it, it forwards itself over ssh. scan runs from hitl-scan.timer every 5 minutes.
 # Webhook URL: ~/.config/notify/hitl-webhook on vaio (outside git, chmod 600: anyone holding it can post).
 # Without it nothing is sent and nothing is marked notified, so pending items go out once the file exists.
+# HITL_DRY_RUN=1 prints instead of posting (and scan marks nothing notified).
 set -uo pipefail
 
 HOST=vaio
@@ -17,6 +21,8 @@ WEBHOOK_FILE=$HOME/.config/notify/hitl-webhook
 PROJECTS_CONF=$HOME/.claude/skills/autopilot/projects.conf
 STATE=$HOME/.local/state/hitl
 NOTIFIED=$STATE/notified
+# Remote Control server any question can be answered in, from the phone too (a user unit on vaio, outside git).
+OPS_UNIT=claude-rc-ops.service
 LABEL=${HITL_LABEL:-needs-answer}  # override only to test scan against an existing label without touching any issue
 mkdir -p "$STATE"
 touch "$NOTIFIED"
@@ -25,6 +31,7 @@ log() { echo "$(date '+%F %T') $*" >> "$STATE/log"; }
 
 cmd_send() {
   local text=$1
+  if [[ -n ${HITL_DRY_RUN:-} ]]; then printf '%s\n' "$text"; return 0; fi
   if [[ ! -s $WEBHOOK_FILE ]]; then
     log "no webhook ($WEBHOOK_FILE); not sent: ${text%%$'\n'*}"
     return 1
@@ -32,6 +39,26 @@ cmd_send() {
   jq -n --arg c "$text" '{content: $c}' \
     | curl -fsS -m 10 -H 'Content-Type: application/json' -d @- "$(cat "$WEBHOOK_FILE")" >/dev/null \
     || { log "send failed: ${text%%$'\n'*}"; return 1; }
+}
+
+# Environment URL of vaio-ops, as its log last printed it. Fails when the server is down: it exits 0 after giving up
+# reconnecting (2026-10-07), and a dead link in a notification is worse than saying so.
+ops_url() {
+  systemctl --user is-active -q "$OPS_UNIT" || return 1
+  journalctl --user -u "$OPS_UNIT" -n 2000 --no-pager -o cat -a \
+    | grep -aoE 'https://claude\.ai/code\?environment=env_[A-Za-z0-9]+' | tail -1 | grep .
+}
+
+cmd_ask() {
+  local head=$1 what=$2 decide=$3 at=${4:-} url
+  if [[ -n $at ]]; then
+    at="<$at>"
+  elif url=$(ops_url); then
+    at="<$url> (vaio-ops)"
+  else
+    at="vaio-ops が落ちている。vaio で systemctl --user restart $OPS_UNIT"
+  fi
+  cmd_send "[要判断] $head"$'\n'"何が起きた: $what"$'\n'"決めること: $decide"$'\n'"答える場所: $at"
 }
 
 cmd_scan() {
@@ -51,7 +78,9 @@ cmd_scan() {
       grep -qxF "$key" "$NOTIFIED" && continue
       comment=$(gh api --paginate "repos/$slug/issues/$n/comments?per_page=100" \
         | jq -r --arg t "$evat" '.[] | select(.created_at <= $t) | .html_url' | tail -1)
-      if cmd_send "[$LABEL] ${slug#*/}#$n ${title:0:100}"$'\n'"<${comment:-$url}>"$'\n'"Claude に任せるなら Remote Control の vaio-ops で「${slug#*/}#$n を見て」"; then
+      if cmd_ask "${slug#*/}#$n ${title:0:100}"$'\n'"<$url>" "$LABEL が付いた" \
+        "<${comment:-$url}> の質問に Issue で答える（Claude に任せるなら下で「${slug#*/}#$n を見て」）"; then
+        [[ -n ${HITL_DRY_RUN:-} ]] && continue
         echo "$key" >> "$NOTIFIED"
         log "notified $key"
       fi
@@ -61,6 +90,7 @@ cmd_scan() {
 
 case ${1:-} in
   send) shift; [[ $# -gt 0 ]] || { echo "usage: hitl send <text>" >&2; exit 1; }; cmd_send "$*" ;;
+  ask) shift; [[ $# -ge 3 ]] || { echo "usage: hitl ask <head> <what> <decide> [<answer-url>]" >&2; exit 1; }; cmd_ask "$@" ;;
   scan) cmd_scan ;;
-  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
