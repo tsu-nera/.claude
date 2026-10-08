@@ -1,5 +1,6 @@
 ---
 description: 作業を中断して別の機械か次のセッションへ引き継ぐ
+disable-model-invocation: true
 ---
 
 # Handoff
