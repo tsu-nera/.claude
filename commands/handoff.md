@@ -1,14 +1,23 @@
 ---
-description: 作業を中断して別の機械か次のセッションへ引き継ぐ
+description: 作業を中断して別の機械か次のセッションへ引き継ぐ（`/handoff take` で受け取る）
 disable-model-invocation: true
+argument-hint: "[take]"
 ---
 
 # Handoff
 
-書き出し先は `memory-sync handoff-path`（private な claude-memory repo で同期され、次にこのプロジェクトで起動したセッションの SessionStart hook が1回だけ拾う）。作業 repo が public でも、外に出せない文脈をそのまま書いてよい。
+引数: $ARGUMENTS
+
+handoff は private な claude-memory repo で同期される（作業 repo が public でも、外に出せない文脈をそのまま書いてよい）。1プロジェクトに1つ。
+
+## 引数 `take`: 受け取る
+
+`memory-sync handoff-take` を実行する（sync して中身を出し、消費済みにする）。中身を2〜3行で伝え、ユーザーの指示を待ってから再開する。無ければそう伝えて終わる。
+
+## 引数なし: 書き出す
 
 1. 作業中の worktree・ブランチごとに、未コミットの変更を WIP commit して push する（main には push しない）。push できないものは handoff に理由を書く
-2. 下の形で `memory-sync handoff-path` に書く（既存があれば上書き。1プロジェクト1つ）
+2. 下の形で `memory-sync handoff-path` に書く（既存があれば上書き）
 3. `memory-sync` で即 push し、書いた内容を3行で報告する
 
 ```markdown
