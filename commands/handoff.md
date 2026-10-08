@@ -1,41 +1,24 @@
-# Handoff Command
+---
+description: 作業を中断して別の機械（mouse ⇄ vaio）か次のセッションへ引き継ぐ
+---
 
-セッション終了時に作業状態を HANDOFF.md に保存し、次のセッションで引き継げるようにする。
-
-## Instructions for Claude:
-
-1. 既存の HANDOFF.md があればまず読み込む
-2. 現在の会話の内容を分析し、以下の構造で HANDOFF.md をプロジェクトルートに作成・更新する:
-
-```markdown
 # Handoff
 
+書き出し先は `memory-sync handoff-path`（private な claude-memory repo で同期され、次にこのプロジェクトで起動したセッションの SessionStart hook が1回だけ拾う）。repo が public でも家の状態などをそのまま書いてよい。
+
+1. 作業中の worktree・ブランチごとに、未コミットの変更を WIP commit して push する（main には push しない）。push できないものは handoff に理由を書く
+2. 下の形で `memory-sync handoff-path` に書く（既存があれば上書き。1プロジェクト1つ）
+3. `memory-sync` で即 push し、書いた内容を3行で報告する
+
+```markdown
+from: <host（`git -C ~/.claude/projects config user.name`）> <日時>
+
 ## 目標
-[このセッションで取り組んでいたタスクの概要]
-
-## 進捗
-- [完了した作業のリスト]
-
-## うまくいったこと
-- [成功したアプローチや発見]
-
-## うまくいかなかったこと
-- [試したが失敗したアプローチ、避けるべきこと]
-
-## 次のステップ
-- [次のセッションでやるべきこと]
-
-## 作業ブランチ・worktree
-- ブランチ: [作業中のブランチ名、なければ「main」]
-- worktree: [worktreeパス、なければ「なし」]
-- PR: [PR番号、なければ「なし」]
-
-## 重要なコンテキスト
-- [次のセッションで知っておくべき技術的判断や背景情報]
+## 済んだこと（確認したことはコマンドと結果つき）
+## うまくいかなかった・やっていないこと
+## 次にやること
+## ブランチ・worktree・PR・Issue
+## 機械に残っている状態（点けたままの機器、止めたサービス、tmp の成果物など）
 ```
 
-3. HANDOFF.md を書き出したら、ユーザーに内容を表示して確認を求める
-
-## セッション再開時:
-
-ユーザーが「再開」「resume」「引き継ぎ」などと言った場合は、HANDOFF.md を読み込んで作業状態を把握してから作業を開始する。
+会話にしかない判断の経緯を優先して書く。git・Issue・memory から読めることは場所だけ書く。
