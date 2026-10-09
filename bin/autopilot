@@ -301,10 +301,15 @@ cmd_loop() {
     else
       prev_prompt="$skill $prev_ref"; prev_label="$name#$prev_ref $(cd "$dir" && gh issue view "$prev_ref" --json title -q .title)"
     fi
-    if [[ "$(session_field "$prev_id" status)" == busy ]]; then
-      echo "$(now) waiting for $prev_kind $prev_ref ($prev_id) launched by the previous loop"
+    local prev_status; prev_status=$(session_field "$prev_id" status)
+    # Gone between loops means someone stopped it by hand (claude stop, autopilot clean): nothing left to judge it by.
+    if [[ -z $prev_status ]]; then
+      echo "$(now) $prev_kind $prev_ref ($prev_id) from the previous loop is gone, not judging it"
+      rm -f "$st/running"
+    else
+      [[ $prev_status == busy ]] && echo "$(now) waiting for $prev_kind $prev_ref ($prev_id) launched by the previous loop"
+      finish_job "$prev_kind" "$prev_ref" "$prev_id" "$prev_label" "$prev_started" "$prev_prompt" || halted=true
     fi
-    finish_job "$prev_kind" "$prev_ref" "$prev_id" "$prev_label" "$prev_started" "$prev_prompt" || halted=true
   fi
   while ! $halted; do
     if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then end_loop "deadline reached"; break; fi
