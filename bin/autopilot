@@ -40,6 +40,9 @@ MIN_JOB_SECONDS=180
 # A job that ends on an API error (outage, overload) is queued again after these waits, one per consecutive failure across
 # the loop: an outage hits every job alike. One more failure past the list halts the loop.
 API_RETRY_WAITS=(600 1800)
+# A session that finished its turn (state done) but stays busy this long is held by a hung child, such as an RPC call
+# without a timeout. Waiting on it would hold the loop forever, so it is stopped and judged as done.
+DONE_BUSY_GRACE=600
 # How long a job that needs someone waits for a watcher to pick it up before it goes to #hitl (a watch polls every 30s).
 ACK_WAIT=${AUTOPILOT_ACK_WAIT:-120}
 # Usage written by statusline-command.sh, which also renders inside the worker's background sessions.
@@ -178,27 +181,137 @@ plan() {
       done
 }
 
+# Blocks while the session is busy, then prints "<state|gone> <true|false>": the last state seen and whether it was
+# stopped here. The state is the one seen before the stop, since a stopped session may drop out of `claude agents`.
+# Log lines go to stderr, which the loop's log captures too.
+wait_session() {
+  local id=$1 status state="" done_since=""
+  while :; do
+    # One listing per poll, so status and state come from the same moment.
+    status=""; state=""
+    read -r status state < <(agents | jq -r --arg id "$id" '.[] | select(.id == $id) | "\(.status) \(.state // "")"')
+    [[ $status == busy ]] || break
+    if [[ $state != done ]]; then done_since=""
+    elif [[ -z $done_since ]]; then done_since=$(date +%s)
+    elif (( $(date +%s) - done_since >= DONE_BUSY_GRACE )); then
+      echo "$(now) $id done but still busy for $(( ($(date +%s) - done_since) / 60 ))m (hung child process?); stopping it" >&2
+      if claude stop "$id" >/dev/null 2>&1; then echo "done true"; return; fi
+      echo "$(now) could not stop $id (autopilot clean)" >&2
+      break
+    fi
+    sleep 60
+  done
+  echo "${state:-gone} false"
+}
+
+# Waits for a launched job and acts on how it ended. Returns 1 when the loop must stop launching (HALTED), else 0.
+# Runs inside cmd_loop: it reads dir, st and name, updates api_failures, and calls record and end_loop from there.
+finish_job() {
+  local kind=$1 ref=$2 id=$3 label=$4 started=$5 prompt=$6
+  local state stopped elapsed issue
+  # Waiting for our own session keeps each loop to one slot, leaving the other for a second repo's loop.
+  read -r state stopped <<<"$(wait_session "$id")"
+  # A session stopped by wait_session needs no second stop (it would only log a failure).
+  stop_job() { $stopped || claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"; }
+  elapsed=$(( $(date +%s) - started ))
+  echo "$(now) $kind $ref $id idle (state: $state, $((elapsed / 60))m)"
+  rm -f "$st/running"
+  issue=$(job_issue "$kind" "$ref" "$prompt")
+  local outcome=""; [[ -n $issue ]] && outcome=$'\n'"$(issue_outcome "$dir" "$issue")"
+  # A closed issue is proof of success whatever the state label says (#3820 merged, then read as "working") or however
+  # short the job (#3988 merged in 3m), so it skips both checks below.
+  local closed=false
+  if [[ -n $issue ]] && issue_closed_by_pr "$dir" "$issue"; then closed=true; fi
+  local ref_line="${label:0:80}${issue:+ <$(issue_url "$dir" "$issue")>}"
+  if $closed; then
+    local decided=""; issue_has_decision "$dir" "$issue" && decided=" (agent decided: see 追加決定)"
+    record "merged  $ref_line$decided"
+  fi
+  # The worker hands a question back through the issue and exits, so the session holds nothing worth keeping.
+  if ! $closed && [[ -n $issue ]] && issue_has_label "$dir" "$issue" needs-answer; then
+    echo "$(now) $kind $ref needs an answer on the issue, skipping"
+    record "answer  $ref_line"
+    stop_job
+    notify "[needs-answer] ${label:0:80}: answer on the issue, then autopilot add$outcome"
+    return 0
+  fi
+  # An API error is written as an ordinary assistant turn, so the session reads as blocked or done like a question would.
+  local tf api_error=""; tf=$(transcript "$id"); [[ -n $tf ]] && api_error=$(last_said "$tf" | cut -f1)
+  if ! $closed && [[ -n $api_error && $api_error != - ]]; then
+    stop_job
+    requeue "$kind" "$ref"
+    api_failures=$(( api_failures + 1 ))
+    local retry_in; retry_in=$(api_retry_wait "$api_error" "$api_failures")
+    if [[ -n $retry_in ]]; then
+      echo "$(now) $kind $ref hit an API error ($api_error), queued again; next launch in $((retry_in / 60))m"
+      record "retry   $ref_line (API $api_error, $api_failures in a row)"
+      notify "[retry] ${label:0:80}: API $api_error, queued again in $((retry_in / 60))m"
+      sleep "$retry_in"
+      return 0
+    fi
+    end_loop "HALTED: $kind $ref hit an API error ($api_error, $api_failures in a row). Queued again; not launching more."
+    record "failed  $ref_line (API $api_error, $api_failures in a row)"
+    notify_hitl HALTED "${label:0:80}$outcome" "API エラー（$api_error）が $api_failures 回続いたので loop は止めた。ジョブは積み直してある。最後の発言: $(said "$id")" \
+      "API の復旧（または設定）を確かめて autopilot start $name"
+    return 1
+  fi
+  # A question is about this issue only; the next one won't hit the same wall. `taken` keeps it out of the next plan.
+  if ! $closed && [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
+    echo "$(now) $kind $ref blocked on a question, skipping. answer: claude attach $id"
+    record "blocked $ref_line (claude attach $id)"
+    api_failures=0
+    notify_hitl blocked "${label:0:80}$outcome" "worker が入力待ちで止まった（loop は次へ進んでいる）。最後の発言: $(said "$id")" \
+      "worker の問いに答える" "$(rc_url "$id")"
+    return 0
+  fi
+  if ! $closed && { [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); }; then
+    end_loop "HALTED: $kind $ref ended in state $state after ${elapsed}s (5h limit, error or a question?). Not launching more."
+    echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
+    record "failed  $ref_line (state $state, claude attach $id)"
+    notify_hitl HALTED "${label:0:80}$outcome" "state $state、$((elapsed / 60))m で終わり loop は止めた。最後の発言: $(said "$id")" \
+      "原因を見て、続けるなら autopilot start $name" "$(rc_url "$id")"
+    return 1
+  fi
+  # A finished session holds ~300MB while idle and nothing is left to answer in it; blocked/HALTED ones stay for attach.
+  stop_job
+  $closed || record "open    $ref_line"
+  api_failures=0
+  notify "[done] ${label:0:80}: $((elapsed / 60))m$outcome"
+}
+
 cmd_loop() {
   local name=$1 urgent_only=$2 deadline=$3 skill=$4 st dir
   FIVE_HOUR_MAX=$5 MODEL=${6:-}
   st=$(repo_state "$name"); dir=$(repo_dir "$name")
   touch "$st/taken" "$st/history"
-  local api_failures=0
+  local api_failures=0 halted=false
   # Read once when the loop ends: the jobs run overnight, so one summary in the morning beats a notification per job.
   local digest; digest=$(mktemp)
   # Outcomes also go to history and the stop reason to last-exit, so `ls` and `watch` can tell what happened after the fact.
   record() { echo "$1" >>"$digest"; echo "$(date '+%F %H:%M') $1" >>"$st/history"; }
   end_loop() { echo "$(now) $1"; echo "$(date '+%F %H:%M') $1" >"$st/last-exit"; }
-  # A job launched by an earlier loop (stopped, then started again) still counts as ours: run after it, not beside it.
+  # A job launched by an earlier loop (stopped, then started again) still counts as ours: run after it, not beside it,
+  # and judge it like our own, or its outcome is lost and its idle session keeps its memory.
   if [[ -f $st/running ]]; then
-    local prev_kind prev_ref prev_id; read -r prev_kind prev_ref prev_id <"$st/running"
-    if [[ "$(session_field "$prev_id" status)" == busy ]]; then
-      echo "$(now) waiting for $prev_kind $prev_ref ($prev_id) launched by the previous loop"
-      while [[ "$(session_field "$prev_id" status)" == busy ]]; do sleep 60; done
+    local prev_kind prev_ref prev_id prev_prompt prev_label prev_started
+    read -r prev_kind prev_ref prev_id <"$st/running"
+    prev_started=$(stat -c %Y "$st/running")
+    if [[ $prev_kind == prompt ]]; then
+      prev_prompt=$(cat "$st/done/$prev_ref.prompt" 2>/dev/null); prev_label="$name ${prev_prompt%%$'\n'*}"
+    else
+      prev_prompt="$skill $prev_ref"; prev_label="$name#$prev_ref $(cd "$dir" && gh issue view "$prev_ref" --json title -q .title)"
     fi
-    rm -f "$st/running"
+    local prev_status; prev_status=$(session_field "$prev_id" status)
+    # Gone between loops means someone stopped it by hand (claude stop, autopilot clean): nothing left to judge it by.
+    if [[ -z $prev_status ]]; then
+      echo "$(now) $prev_kind $prev_ref ($prev_id) from the previous loop is gone, not judging it"
+      rm -f "$st/running"
+    else
+      [[ $prev_status == busy ]] && echo "$(now) waiting for $prev_kind $prev_ref ($prev_id) launched by the previous loop"
+      finish_job "$prev_kind" "$prev_ref" "$prev_id" "$prev_label" "$prev_started" "$prev_prompt" || halted=true
+    fi
   fi
-  while :; do
+  while ! $halted; do
     if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then end_loop "deadline reached"; break; fi
     if [[ -f $st/paused ]]; then
       echo "$(now) paused"
@@ -246,72 +359,7 @@ cmd_loop() {
     echo "$(now) $kind $ref launched as $id"
     local issue; issue=$(job_issue "$kind" "$ref" "$prompt")
     notify "[start] ${label:0:80} ($id)${issue:+$'\n'<$(cd "$dir" && gh issue view "$issue" --json url -q .url)>}"
-    local started state elapsed; started=$(date +%s)
-    # Waiting for our own session keeps each loop to one slot, leaving the other for a second repo's loop.
-    while [[ "$(session_field "$id" status)" == busy ]]; do sleep 60; done
-    state=$(session_field "$id" state); elapsed=$(( $(date +%s) - started ))
-    echo "$(now) $kind $ref $id idle (state: ${state:-gone}, $((elapsed / 60))m)"
-    rm -f "$st/running"
-    local outcome=""; [[ -n $issue ]] && outcome=$'\n'"$(issue_outcome "$dir" "$issue")"
-    # A closed issue is proof of success whatever the state label says (#3820 merged, then read as "working") or however
-    # short the job (#3988 merged in 3m), so it skips both checks below.
-    local closed=false
-    if [[ -n $issue ]] && issue_closed_by_pr "$dir" "$issue"; then closed=true; fi
-    local ref_line="${label:0:80}${issue:+ <$(issue_url "$dir" "$issue")>}"
-    if $closed; then
-      local decided=""; issue_has_decision "$dir" "$issue" && decided=" (agent decided: see 追加決定)"
-      record "merged  $ref_line$decided"
-    fi
-    # The worker hands a question back through the issue and exits, so the session holds nothing worth keeping.
-    if ! $closed && [[ -n $issue ]] && issue_has_label "$dir" "$issue" needs-answer; then
-      echo "$(now) $kind $ref needs an answer on the issue, skipping"
-      record "answer  $ref_line"
-      claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"
-      notify "[needs-answer] ${label:0:80}: answer on the issue, then autopilot add$outcome"
-      continue
-    fi
-    # An API error is written as an ordinary assistant turn, so the session reads as blocked or done like a question would.
-    local tf api_error=""; tf=$(transcript "$id"); [[ -n $tf ]] && api_error=$(last_said "$tf" | cut -f1)
-    if ! $closed && [[ -n $api_error && $api_error != - ]]; then
-      claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"
-      requeue "$kind" "$ref"
-      api_failures=$(( api_failures + 1 ))
-      local retry_in; retry_in=$(api_retry_wait "$api_error" "$api_failures")
-      if [[ -n $retry_in ]]; then
-        echo "$(now) $kind $ref hit an API error ($api_error), queued again; next launch in $((retry_in / 60))m"
-        record "retry   $ref_line (API $api_error, $api_failures in a row)"
-        notify "[retry] ${label:0:80}: API $api_error, queued again in $((retry_in / 60))m"
-        sleep "$retry_in"
-        continue
-      fi
-      end_loop "HALTED: $kind $ref hit an API error ($api_error, $api_failures in a row). Queued again; not launching more."
-      record "failed  $ref_line (API $api_error, $api_failures in a row)"
-      notify_hitl HALTED "${label:0:80}$outcome" "API エラー（$api_error）が $api_failures 回続いたので loop は止めた。ジョブは積み直してある。最後の発言: $(said "$id")" \
-        "API の復旧（または設定）を確かめて autopilot start $name"
-      break
-    fi
-    # A question is about this issue only; the next one won't hit the same wall. `taken` keeps it out of the next plan.
-    if ! $closed && [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
-      echo "$(now) $kind $ref blocked on a question, skipping. answer: claude attach $id"
-      record "blocked $ref_line (claude attach $id)"
-      api_failures=0
-      notify_hitl blocked "${label:0:80}$outcome" "worker が入力待ちで止まった（loop は次へ進んでいる）。最後の発言: $(said "$id")" \
-        "worker の問いに答える" "$(rc_url "$id")"
-      continue
-    fi
-    if ! $closed && { [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); }; then
-      end_loop "HALTED: $kind $ref ended in state ${state:-gone} after ${elapsed}s (5h limit, error or a question?). Not launching more."
-      echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
-      record "failed  $ref_line (state ${state:-gone}, claude attach $id)"
-      notify_hitl HALTED "${label:0:80}$outcome" "state ${state:-gone}、$((elapsed / 60))m で終わり loop は止めた。最後の発言: $(said "$id")" \
-        "原因を見て、続けるなら autopilot start $name" "$(rc_url "$id")"
-      break
-    fi
-    # A finished session holds ~300MB while idle and nothing is left to answer in it; blocked/HALTED ones stay for attach.
-    claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"
-    $closed || record "open    $ref_line"
-    api_failures=0
-    notify "[done] ${label:0:80}: $((elapsed / 60))m$outcome"
+    finish_job "$kind" "$ref" "$id" "$label" "$(date +%s)" "$prompt" || break
   done
   rm -f "$st/running" "$st/loop"
   if [[ -s $digest ]]; then notify "[summary] $name"$'\n'"$(cat "$digest")"; fi
