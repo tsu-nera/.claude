@@ -4,7 +4,7 @@
 評価や比較検討には向かない（宣伝記事・LLM生成記事が混ざる）。
 
 ```bash
-python3 ~/.claude/skills/research/scripts/qiita_search.py --query '<query>' --limit 20
+python3 ~/.claude/skills/web-research/scripts/qiita_search.py --query '<query>' --limit 20
 ```
 
 出力は JSONL（`source/title/url/author/published_at/engagement/stocks/tags/snippet`）。

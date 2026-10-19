@@ -4,7 +4,7 @@
 「作ってみた／検証してみた」の在庫が厚く、株・投資系は定量検証ネタが拾える。
 
 ```bash
-python3 ~/.claude/skills/research/scripts/zenn_search.py --topic 投資 --order alltime --limit 20
+python3 ~/.claude/skills/web-research/scripts/zenn_search.py --topic 投資 --order alltime --limit 20
 ```
 
 出力は JSONL（`source/title/url/author/published_at/engagement/bookmarks/letters/snippet`）。
