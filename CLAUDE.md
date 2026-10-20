@@ -32,7 +32,7 @@
 - `urgent` ラベル = 急ぎ（帰宅後に流す）。`autopilot` CLI は `autopilot`+`urgent` を先に流す。ユーザーが「急ぎ」と言った時だけ付ける（推測で付けない）
 
 ## agent-private
-- 自分の環境（PC・ネットワーク・クラウド・家の機器）の docs は `~/repo/agent-private`（private、全マシンに clone・自動同期）。触る作業の前に該当ファイルを読む。消えると困る事実・他の agent も知るべきことは memory でなくここに書く
+- 自分の環境（PC・ネットワーク・クラウド・家の機器）に触れる作業の前に `~/repo/agent-private/infra/` の該当ファイルを読む
 
 ## Memory管理
 - memory（永続メモリ）の保守は**自律実行・ユーザー確認不要**。「メモに残しますか?」「memory更新しますか?」と聞かない
