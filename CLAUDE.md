@@ -22,14 +22,6 @@
 ## Issue運用
 
 - **Issue 作成は必ず `create-issue` スキル経由**。生 `gh issue create` は hook で deny される
-- モードはユーザーの語で決め打ちする（意味を推測しない）:
-  - 「issue立てて」「issueにして」「起票して」 → **ready**（実装者に渡す粒度。`references/ready.md` を読む）
-  - 「とりあえず」「あとで」「忘れないうちに」「メモ」を含む → **draft**（`inbox` ラベル。出典だけ残す）
-  - **迷ったら draft**（昇格は安い。逆は無人実行で壊れる）
-- `autopilot` ラベル = 無人で自走させてよい（いつ流すかは決めない。`autopilot` CLI が拾う）。条件は
-  **blocker が無い**ことと**検証がローカルで閉じる**ことの2つだけ。レビュー要否・お金に関わるかは条件に入れない
-  （`autopilot` の Issue は常に無人 merge まで進む。merge 前に人の判断が要るものはラベルを付けず、`autopilot add <repo> "/issue-to-pr <番号>"` で積む）
-- `urgent` ラベル = 急ぎ（帰宅後に流す）。`autopilot` CLI は `autopilot`+`urgent` を先に流す。ユーザーが「急ぎ」と言った時だけ付ける（推測で付けない）
 
 ## agent-private
 - 自分の環境（PC・ネットワーク・クラウド・家の機器）に触れる作業の前に `~/repo/agent-private/infra/` の該当ファイルを読む
