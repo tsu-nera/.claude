@@ -1,22 +1,22 @@
 ---
 name: autopilot
-description: 対話なしで完結する仕事を自宅サーバ vaio で自走させるか mouse（このPC）で回すかを決め、vaio なら `autopilot` CLI のキューに積んで流す。ready Issue の /issue-to-pr・/issue-to-merge、autopilot・urgent ラベルの Issue の消化、「vaioで」「vaioに投げて」「今夜流しておいて」と言われた時、mouse の負荷を逃がしたい時に使う。
+description: 対話なしで完結する仕事を自宅サーバ vaio で自走させるか iiyama（このPC）で回すかを決め、vaio なら `autopilot` CLI のキューに積んで流す。ready Issue の /issue-to-pr・/issue-to-merge、autopilot・urgent ラベルの Issue の消化、「vaioで」「vaioに投げて」「今夜流しておいて」と言われた時、iiyama の負荷を逃がしたい時に使う。
 ---
 
 # autopilot
 
-vaio が worker。`autopilot` CLI（`~/.claude/bin/autopilot`）は vaio 上で動き、mouse から叩くと ssh で vaio に転送される。
+vaio が worker。`autopilot` CLI（`~/.claude/bin/autopilot`）は vaio 上で動き、iiyama から叩くと ssh で vaio に転送される。
 起動はユーザーが流したい時だけ（常駐 cron は持たない。週の rate limit を毎晩使わないため）。
 
 ## 振り分け
 
 **vaio**: 対話なしで最後まで終わる仕事（ready Issue の実装、`autopilot` ラベルの消化、単発の docs 更新）
-**mouse**: 判断を挟む仕事、送金・deploy・本番サーバ操作、main 作業ツリーや submodule・`resources/` キャッシュに依存する作業、
+**iiyama**: 判断を挟む仕事、送金・deploy・本番サーバ操作、main 作業ツリーや submodule・`resources/` キャッシュに依存する作業、
 全走テストの計測を含む仕事（vaio は 4 スレッド）
 
-ユーザーが「mouse で」「vaio で」と言えばそれに従う。行き先は積んだ後に1行で報告する。
+ユーザーが「iiyama で」「vaio で」と言えばそれに従う。行き先は積んだ後に1行で報告する。
 
-対話セッションから積んだら、`autopilot watch <repo>` を `run_in_background` で張る。ジョブが blocked / needs-answer / failed になるか、loop が理由を問わず止まると抜けるので、呼び戻されたらすぐ報告・対処できる。watch は mouse から30秒ごとに vaio を見に行き、受け取った止まり目に ack を付ける。ack の付いた止まり目は #hitl に送られず、2分以内に誰も受け取らなかったものだけが #hitl に行く（mouse のスリープ・セッション終了も同じ扱い）。抜けた後も loop が続いているなら張り直す（張っていない間の止まり目は #hitl に行く）。
+対話セッションから積んだら、`autopilot watch <repo>` を `run_in_background` で張る。ジョブが blocked / needs-answer / failed になるか、loop が理由を問わず止まると抜けるので、呼び戻されたらすぐ報告・対処できる。watch は iiyama から30秒ごとに vaio を見に行き、受け取った止まり目に ack を付ける。ack の付いた止まり目は #hitl に送られず、2分以内に誰も受け取らなかったものだけが #hitl に行く（iiyama のスリープ・セッション終了も同じ扱い）。抜けた後も loop が続いているなら張り直す（張っていない間の止まり目は #hitl に行く）。
 
 blocked の質問が委任の範囲内（merge-gate の機械的な上限など）なら、自分で答えてから `autopilot start` し直す。範囲外なら `hitl ask "<repo>#<番号> <題>" "<調べた結果>" "<選択肢と推奨>"` で #hitl に上げる（答える場所は既定で vaio-ops。ユーザーは外出先から答える前提で、文面だけで判断できるように書く）。
 
@@ -47,7 +47,7 @@ autopilot status / clean / res
 - 受け入れは vaio 全体で busy 2本・空きメモリ 2.5GB 以上。1つの loop は自分の1本が idle になるまで次を起動しないので、2 repo の loop が並走できる。
   重いのは agent でなく tsc/vitest で、repo 側の lock（xchain-arb は `prepush-checks.lock`）が直列化する前提
 - プロジェクトは `projects.conf` に定義する。追加したら vaio に clone・`~/.claude.json` で trust・`autopilot`/`urgent` ラベル作成が要る（`autopilot projects` で点検。未 trust だと background セッションが起動を拒否する）
-- memory は同期せず、worker は auto memory を切って起動する（`--settings`。bg daemon は呼び出し側の環境変数を渡さない）。worker は Issue 本文と repo の規約だけで動く（ready Issue は自己完結の粒度で書く）。残す知見は PR 本文に書かせ、mouse 側で拾う
+- memory は同期せず、worker は auto memory を切って起動する（`--settings`。bg daemon は呼び出し側の環境変数を渡さない）。worker は Issue 本文と repo の規約だけで動く（ready Issue は自己完結の粒度で書く）。残す知見は PR 本文に書かせ、iiyama 側で拾う
 - skill や CLI の改訂は `~/.claude` を push してから届く（`start` が vaio で pull する）
 - 人の対応が要る通知は Discord の #hitl（`~/.claude/bin/hitl`）。`needs-answer` が付いた Issue / PR は `hitl-scan.timer` が5分ごとに拾って送り、`[blocked]`・`[HALTED]` は loop が直接送る。どれも「何が起きた／決めること／答える場所（Remote Control の URL、既定は vaio 常駐の vaio-ops = `claude-rc-ops.service`。xchain-arb の障害対応用は別の xchain-ops）」の型（`hitl ask`）。下の autopilot 用 webhook はログとして流すだけ
 - Discord 通知はジョブの開始・完了（HALTED 含む）だけ。vaio の `~/.config/autopilot/discord-webhook`（git 外・chmod 600）に URL があれば送る。無ければ何もしない

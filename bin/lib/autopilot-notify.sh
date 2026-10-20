@@ -1,10 +1,10 @@
-# Sourced by autopilot: how a stopped job reaches someone. The Discord log channel always; the agent watching from mouse
+# Sourced by autopilot: how a stopped job reaches someone. The Discord log channel always; the agent watching from the interactive PC
 # when there is one (it acks what it receives); #hitl only when nobody acked in time.
 
 # Blocks until the loop needs someone: a job blocked, handed back a question or failed, or the loop ended for any reason.
-# Meant for run_in_background from mouse, so unlike every other command it polls from the calling host: each poll acks the
+# Meant for run_in_background from the interactive PC, so unlike every other command it polls from the calling host: each poll acks the
 # lines it receives, and the loop sends to #hitl only what nobody picked up. A watcher kept on the worker over one long ssh
-# could not prove that: it outlives a mouse gone to sleep. A failed poll is retried, since the loop runs on regardless.
+# could not prove that: it outlives an interactive PC gone to sleep. A failed poll is retried, since the loop runs on regardless.
 cmd_watch() {
   local name=${1:?usage: autopilot watch <repo>} seen=- got="" out lines at count loop rest
   name=${name##*/}
@@ -31,7 +31,7 @@ notify() {
 # [needs-answer] is left out here: hitl-scan picks up the label itself.
 # Args: tag, head (job label and issue/PR lines), what happened, what to decide, where to answer (empty: vaio-ops).
 # Call it after record: the #hitl part waits for a watch to ack that history line and is dropped if one does (the agent
-# on mouse got it). It runs detached so a loop ending right after (HALTED) does not take it down with its tmux session.
+# on the interactive PC got it). It runs detached so a loop ending right after (HALTED) does not take it down with its tmux session.
 notify_hitl() {
   notify "[$1] $2"
   setsid -f "$SELF" _escalate "$st" "$(wc -l <"$st/history")" "$@" >>"$st/log" 2>&1

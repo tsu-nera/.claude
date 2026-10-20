@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run a long, Claude-free job (measurement / post-deploy watch) on the worker host (vaio) so it survives mouse shutting down,
+# Run a long, Claude-free job (measurement / post-deploy watch) on the worker host (vaio) so it survives the interactive PC sleeping or shutting down,
 # and report into an existing issue/PR: a summary comment every --every, a final one at the end, then the needs-answer label.
 # Run it on any host: off the worker it copies --sync files into the worker's checkout and forwards itself over ssh.
 #   long-run.sh start <project> --to <issue/PR#> --for 24h [--every 3h] --summary '<cmd>' [--sync <path>]... [--dry] -- <cmd...>

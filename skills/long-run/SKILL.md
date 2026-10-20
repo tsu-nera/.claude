@@ -1,17 +1,17 @@
 ---
 name: long-run
-description: 30分を超えて回し続ける処理（計測スクリプト、clip ladder 等の時系列サンプリング、deploy 後の数時間監視、ログの定点観測）を始める前に必ず使う。mouse（このPC）は夕方に電源を落とすので、run_in_background や nohup で mouse に置くと途中で死ぬ。行き先を決め、vaio なら同梱スクリプトで Claude なしに常駐させ、結果を既存の PR / Issue へ定期コメントして needs-answer で止める。「N時間計測して」「しばらく様子を見て」「deploy 後に監視」「24h 回して」「残りは vaio で」と言われた時、自分で長時間ジョブを起動しようとした時に使う。
+description: 30分を超えて回し続ける処理（計測スクリプト、clip ladder 等の時系列サンプリング、deploy 後の数時間監視、ログの定点観測）を始める前に必ず使う。iiyama（このPC）は持ち歩き、蓋を閉じるとスリープするので、run_in_background や nohup で iiyama に置くと途中で死ぬ。行き先を決め、vaio なら同梱スクリプトで Claude なしに常駐させ、結果を既存の PR / Issue へ定期コメントして needs-answer で止める。「N時間計測して」「しばらく様子を見て」「deploy 後に監視」「24h 回して」「残りは vaio で」と言われた時、自分で長時間ジョブを起動しようとした時に使う。
 ---
 
 # long-run
 
-`long-run.sh`（このディレクトリ）は vaio 上で動き、mouse から叩くと ssh で転送される。ジョブは `systemd-run --user` で常駐するので、ssh を切っても mouse を落としても続く。途中は Claude を使わない（待つだけのセッションはトークンを焼き、落ちれば読み手も消える）。
+`long-run.sh`（このディレクトリ）は vaio 上で動き、iiyama から叩くと ssh で転送される。ジョブは `systemd-run --user` で常駐するので、ssh を切っても iiyama が寝ても続く。途中は Claude を使わない（待つだけのセッションはトークンを焼き、落ちれば読み手も消える）。
 
 ## 振り分け
 
-- **計測（判定は後でよい）**: 時間帯に関係なく vaio。mouse から起動するので手間は変わらない
-- **deploy 直後の監視（異常時にすぐ手を打つ）**: ユーザーがいる間は mouse のセッションで見る（その場で調べて止められるのが価値）。ユーザーが離れる・PC を落とすと言ったら、残りを vaio に渡す。vaio 側は検知して書くだけで、対応は人が戻ってから
-- 30分以内に終わる、または Claude の判断を途中で何度も挟む調査は対象外（mouse のセッションでそのままやる）
+- **計測（判定は後でよい）**: 時間帯に関係なく vaio。iiyama から起動するので手間は変わらない
+- **deploy 直後の監視（異常時にすぐ手を打つ）**: ユーザーがいる間は iiyama のセッションで見る（その場で調べて止められるのが価値）。ユーザーが離れる・PC を閉じると言ったら、残りを vaio に渡す。vaio 側は検知して書くだけで、対応は人が戻ってから
+- 30分以内に終わる、または Claude の判断を途中で何度も挟む調査は対象外（iiyama のセッションでそのままやる）
 
 ## 結果の置き場
 
@@ -37,7 +37,7 @@ long-run.sh ls / log <unit> / stop <unit>
 ## 落とし穴
 
 - project は `~/.claude/skills/autopilot/projects.conf` の名前。コマンドは vaio のその checkout を cwd に、login shell で走る（素の `ssh vaio 'cmd'` は PATH に asdf が入らず、Node が古い `/usr/local/bin/node` v20 になる）
-- `scripts/scratch/` などの gitignore 下のファイルは git では届かない。`--sync` で mouse の checkout から同じ相対パスへコピーする。commit 済みのファイルは vaio の checkout が古いと届いていないので、必要なら先に vaio で pull する
+- `scripts/scratch/` などの gitignore 下のファイルは git では届かない。`--sync` で iiyama の checkout から同じ相対パスへコピーする。commit 済みのファイルは vaio の checkout が古いと届いていないので、必要なら先に vaio で pull する
 - このスクリプト自体は `~/.claude` を push しないと vaio に届かない（転送時に vaio で `git pull --ff-only` する）
 - 実弾（署名して送る操作・deploy・本番サーバの変更）は無人ジョブに入れない。repo の規約が優先
 - 試すときは `--dry` を付ける（コメントを `~/.local/state/long-run/<unit>/comments.md` に書き出し、ラベルも付けない）。環境変数は ssh 転送で落ちるので使えない。テストでも `--to` には自分の Issue を使う
