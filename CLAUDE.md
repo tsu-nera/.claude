@@ -31,6 +31,9 @@
   （`autopilot` の Issue は常に無人 merge まで進む。merge 前に人の判断が要るものはラベルを付けず、`autopilot add <repo> "/issue-to-pr <番号>"` で積む）
 - `urgent` ラベル = 急ぎ（帰宅後に流す）。`autopilot` CLI は `autopilot`+`urgent` を先に流す。ユーザーが「急ぎ」と言った時だけ付ける（推測で付けない）
 
+## agent-private
+- 自分の環境（PC・ネットワーク・クラウド・家の機器）の docs は `~/repo/agent-private`（private、全マシンに clone・自動同期）。触る作業の前に該当ファイルを読む。消えると困る事実・他の agent も知るべきことは memory でなくここに書く
+
 ## Memory管理
 - memory（永続メモリ）の保守は**自律実行・ユーザー確認不要**。「メモに残しますか?」「memory更新しますか?」と聞かない
 - 記録先判断（新規ファイル or 既存追記）・クロスリンク・事実誤認の修正・MEMORY.md index 同期は自分で判断して実行し、事後に1-2文で報告
