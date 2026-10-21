@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Run unattended Claude jobs on the worker host (vaio) as background sessions (claude --bg) with Remote Control on,
+# Run unattended Claude jobs on the home workers as background sessions (claude --bg) with Remote Control on,
 # so they survive the laptop going offline and can be answered from the phone / claude.ai/code when they get stuck.
 # Per repo, work comes from prompts queued with `add` first, then open issues labeled autopilot (urgent first).
 # Labeled issues always run as /issue-to-merge; one that needs a human before merge is queued as a "/issue-to-pr <n>" prompt instead.
-# Run it on any host: off the worker it forwards itself over ssh.
+# The queue and loops live on vaio (always on); each job goes to the first worker in workers.conf with room, woken if asleep.
 #   autopilot ls                                     running jobs and what runs next, per repo
 #   autopilot add <repo> <issue#> [--urgent]         label the issue autopilot (and urgent)
 #   autopilot add <repo> <prompt>                    queue a free prompt, e.g. "/task-to-merge ..."
@@ -13,27 +13,31 @@
 #   autopilot stop <repo|all>                        stop launching more (running sessions keep going)
 #   autopilot pause <repo|all> / resume <repo|all>   hold / release new launches; the loop and its running job stay
 #   autopilot watch <repo>                           block until a job is blocked / needs an answer / failed or the loop ends
-#   autopilot projects                               defined projects and whether each is ready on the worker
-#   autopilot status                                 background sessions with state and Remote Control URL
+#   autopilot projects                               defined projects and whether each is ready on each worker
+#   autopilot status                                 background sessions with state and Remote Control URL, per worker
 #   autopilot clean                                  stop idle sessions (they keep ~300MB each until stopped)
-#   autopilot res                                    load / memory / agent count
+#   autopilot res                                    load / memory / agent count, per worker
 set -uo pipefail
 
+# The controller: where the queue, loops and notifications live. Run off it, autopilot forwards itself there over ssh,
+# except the _w-* commands, which the controller runs on the worker it picked.
 HOST=vaio
 WATCH_POLL=${AUTOPILOT_WATCH_POLL:-30}
 source "$(dirname "$(realpath "$0")")/lib/autopilot-notify.sh"
 
-if [[ "$(hostname)" != ${HOST}* ]]; then
+if [[ "$(hostname)" != ${HOST}* && ${1:-} != _w-* ]]; then
   if [[ ${1:-} == watch ]]; then shift; cmd_watch "$@"; exit; fi
   tty=(); [[ -t 0 ]] && tty=(-t)
   exec ssh "${tty[@]}" "$HOST" "bash -lc $(printf %q "$(printf '%q ' autopilot "$@")")"
 fi
 
-# Agents themselves are light (~300MB, ~5% CPU); the heavy part is tsc (peak 1.8GB) and vitest (all 4 cores),
-# which repos serialize with their own lock (xchain-arb: prepush-checks.lock). So two agents fit as long as
-# there is room for one more tsc peak plus the agent.
-MAX_BUSY=2
-MIN_AVAIL_MB=2500
+# Per-worker room (max busy sessions, min free memory) is in workers.conf. Agents themselves are light (~300MB, ~5% CPU);
+# the heavy part is tsc (peak 1.8GB) and vitest (all cores), which repos serialize with their own lock
+# (xchain-arb: prepush-checks.lock). So a worker fits one more agent while it has room for one more tsc peak.
+WORKERS_CONF=$HOME/.claude/skills/autopilot/workers.conf
+# A worker that could not be reached or woken is skipped for this long, so each launch doesn't wait on it again.
+DOWN_MINUTES=10
+WAKE_WAIT=90
 # A job that goes idle sooner than this, or not in state done, most likely hit the 5-hour limit or an error.
 # Launching the next one would hit the same wall, so the loop halts instead of burning through the queue.
 MIN_JOB_SECONDS=180
@@ -105,58 +109,157 @@ repo_dir() {
   echo "$d"
 }
 repo_state() { local s=$STATE/${1##*/}; mkdir -p "$s/queue"; echo "$s"; }
-agents() { claude agents --json; }
-session_field() { agents | jq -r --arg id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]'; }
-busy_count() { agents | jq '[.[] | select(.status == "busy")] | length'; }
+worker_names() { grep -v '^\s*#' "$WORKERS_CONF" | awk 'NF {print $1}'; }
+worker_field() { awk -v n="$1" -v i="$2" '$1 == n {print $i}' "$WORKERS_CONF"; }
+# Runs an autopilot command on a worker: in place on the controller, else over ssh. The command goes in on stdin so the
+# login shell there (fish on mouse) never parses bash quoting. Exit 255 means the worker could not be reached.
+on_worker() {
+  local w=$1; shift
+  if [[ $w == "$HOST" ]]; then "$SELF" "$@"; return; fi
+  ssh -o BatchMode=yes -o ConnectTimeout=5 "$w" 'bash -ls' <<<"~/.claude/bin/autopilot $(printf '%q ' "$@")"
+}
+# Fails when the worker can't be reached, so callers can tell that from "no sessions".
+agents() { on_worker "$1" _w-agents; }
+busy_count() { local j; j=$(agents "$1") || return 1; jq '[.[] | select(.status == "busy")] | length' <<<"$j"; }
+attach_hint() { if [[ $1 == "$HOST" ]]; then echo "claude attach $2"; else echo "ssh $1, claude attach $2"; fi; }
+recently_down() { [[ -n $(find "$STATE/down-$1" -mmin -"$DOWN_MINUTES" 2>/dev/null) ]]; }
+# Succeeds when the worker answers, waking it first if asleep. One the loop woke is marked, so it goes back to sleep
+# once nothing of autopilot's is left there (sleep_idle_workers); one that was already awake is left as it was.
+worker_up() {
+  local w=$1 wake
+  [[ $w == "$HOST" ]] && return 0
+  recently_down "$w" && return 1
+  on_worker "$w" _w-mem >/dev/null 2>&1 && return 0
+  wake=$(worker_field "$w" 4)
+  if [[ -n $wake && $wake != - ]]; then
+    echo "$(now) $w unreachable, waking it ($wake)" >&2
+    "$wake" >&2
+    local t0=$SECONDS
+    while (( SECONDS - t0 < WAKE_WAIT )); do
+      if on_worker "$w" _w-mem >/dev/null 2>&1; then touch "$STATE/woke-$w"; echo "$(now) $w is up" >&2; return 0; fi
+      sleep 5
+    done
+  fi
+  echo "$(now) $w unreachable, skipping it for ${DOWN_MINUTES}m" >&2
+  touch "$STATE/down-$w"
+  return 1
+}
+# A worker the loop woke goes back to sleep when it holds no session at all (a blocked one waits there for its answer)
+# and no other loop, which could launch there next, is running. Arg: the calling loop's own repo, which is ending.
+sleep_idle_workers() {
+  local self=${1:-} w j
+  tmux ls -F '#S' 2>/dev/null | grep '^autopilot-' | grep -qvx "autopilot-$self" && return 0
+  for w in $(worker_names); do
+    [[ -f $STATE/woke-$w ]] || continue
+    j=$(agents "$w") || continue
+    (( $(jq length <<<"$j") == 0 )) || continue
+    on_worker "$w" _w-suspend && rm -f "$STATE/woke-$w" && echo "$(now) $w: nothing left there, suspended it"
+  done
+}
 # Check and launch share one lock, held until the new session shows as busy, so two loops can't both pass the check
-# before either session is counted. Prints the session id. Returns 1 when there is no room (retry later) and 2 when
-# claude itself refused to launch (retrying would fail the same way), with the reason on stderr.
-# The name is set explicitly: auto-generated names often drop the issue number, which is what `clean` is matched by.
+# before either session is counted. Tries the workers in workers.conf order and prints "<worker> <session id>".
+# Returns 1 when no worker has room (retry later) and 2 when claude itself refused to launch (retrying would fail the
+# same way), with the reason on stderr. A worker that is unreachable or lacks the project is passed over, not fatal.
 try_launch() {
-  local dir=$1 prompt=$2 name=$3
+  local name=$1 prompt=$2 label=$3
   mkdir -p "$STATE"
   (
     flock 8
-    local busy avail out
-    busy=$(busy_count); avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)
-    if (( busy >= MAX_BUSY || avail < MIN_AVAIL_MB )); then
-      echo "$(now) no room: busy $busy/$MAX_BUSY, mem avail ${avail}MB (need $MIN_AVAIL_MB)" >&2; exit 1
-    fi
-    git -C "$dir" pull --ff-only -q || echo "$(now) warning: pull failed in $dir, launching on the current checkout" >&2
-    # Output goes through a file: the backgrounded session may inherit stdout, and a pipe would block until it exits.
-    out=$(mktemp)
-    local model_args=(); [[ -n $MODEL ]] && model_args=(--model "$MODEL")
-    # Workers run on the issue and the repo rules, not on memory (about 9k tokens re-read every turn). An env var
-    # would not reach the session: the bg daemon does not pass the caller's environment through, flags it keeps.
-    # The hook turns prompts that bypass mode still raises into denials the agent can act on (a prompt hangs a worker).
-    (cd "$dir" && claude --bg "${model_args[@]}" --settings "$WORKER_SETTINGS" \
-      --name "$name" --remote-control "$name" --permission-mode bypassPermissions \
-      --append-system-prompt "$WORKER_NOTE" "$prompt") >"$out" 2>&1 </dev/null
-    local id; id=$(grep -o 'backgrounded · [0-9a-f]*' "$out" | awk '{print $3}')
-    [[ -n "$id" ]] || { echo "$(now) launch failed: $(cat "$out")" >&2; rm -f "$out"; exit 2; }
-    rm -f "$out"
-    for _ in $(seq 24); do (( $(busy_count) > busy )) && break; sleep 5; done
-    echo "$id"
+    local w busy avail id rc why=()
+    for w in $(worker_names); do
+      worker_up "$w" || { why+=("$w down"); continue; }
+      if ! busy=$(busy_count "$w") || ! avail=$(on_worker "$w" _w-mem); then why+=("$w unreachable"); continue; fi
+      if (( busy >= $(worker_field "$w" 2) || avail < $(worker_field "$w" 3) )); then
+        why+=("$w busy $busy/$(worker_field "$w" 2) mem ${avail}MB"); continue
+      fi
+      id=$(on_worker "$w" _w-launch "$name" "$label" "$MODEL" "$prompt"); rc=$?
+      case $rc in
+        0) ;;
+        3|255) why+=("$w not usable"); continue ;;
+        *) exit 2 ;;
+      esac
+      for _ in $(seq 24); do (( $(busy_count "$w" || echo 0) > busy )) && break; sleep 5; done
+      echo "$w $id"; exit 0
+    done
+    echo "$(now) no room: ${why[*]}" >&2; exit 1
   ) 8>"$STATE/launch.lock"
+}
+
+# The _w-* commands run on the worker the controller picked (on_worker).
+cmd_w_ready() {
+  local dir; dir=$(project_path "$1")
+  [[ -d $dir/.git ]] || { echo "no clone at $dir"; return; }
+  jq -e --arg p "$dir" '.projects[$p].hasTrustDialogAccepted' ~/.claude.json >/dev/null || echo "not trusted"
+  gh auth status >/dev/null 2>&1 || echo "gh not logged in"
+}
+# Prints the session id. Exits 3 when this worker isn't set up for the project, 2 when claude refused to launch.
+# The name is set explicitly: auto-generated names often drop the issue number, which is what `clean` is matched by.
+cmd_w_launch() {
+  local name=$1 label=$2 model=$3 prompt=$4 dir problems out id
+  problems=$(cmd_w_ready "$name")
+  [[ -z $problems ]] || { echo "$(now) $(hostname -s) not ready for $name: $problems" >&2; exit 3; }
+  dir=$(project_path "$name")
+  # The controller pulls its own checkout at start; a worker woken or left idle may be days behind on skills.
+  [[ "$(hostname)" == ${HOST}* ]] || git -C ~/.claude pull --ff-only -q \
+    || echo "$(now) warning: ~/.claude pull failed on $(hostname -s), skills may be stale" >&2
+  git -C "$dir" pull --ff-only -q || echo "$(now) warning: pull failed in $dir, launching on the current checkout" >&2
+  # Output goes through a file: the backgrounded session may inherit stdout, and a pipe would block until it exits.
+  out=$(mktemp)
+  local model_args=(); [[ -n $model ]] && model_args=(--model "$model")
+  # Workers run on the issue and the repo rules, not on memory (about 9k tokens re-read every turn). An env var
+  # would not reach the session: the bg daemon does not pass the caller's environment through, flags it keeps.
+  # The hook turns prompts that bypass mode still raises into denials the agent can act on (a prompt hangs a worker).
+  (cd "$dir" && claude --bg "${model_args[@]}" --settings "$WORKER_SETTINGS" \
+    --name "$label" --remote-control "$label" --permission-mode bypassPermissions \
+    --append-system-prompt "$WORKER_NOTE" "$prompt") >"$out" 2>&1 </dev/null
+  id=$(grep -o 'backgrounded · [0-9a-f]*' "$out" | awk '{print $3}')
+  [[ -n "$id" ]] || { echo "$(now) launch failed on $(hostname -s): $(cat "$out")" >&2; rm -f "$out"; exit 2; }
+  rm -f "$out"
+  echo "$id"
+}
+cmd_w_said() { local f; f=$(transcript "$1"); [[ -n $f ]] && last_said "$f"; }
+cmd_w_limits() { [[ -f $LIMITS_FILE ]] && cat "$LIMITS_FILE"; }
+cmd_w_status() {
+  claude agents --json | jq -r --argjson now "$(date +%s)" '.[] | "\(.id)  \(.status)/\(.state // "-")  \((($now - .startedAt/1000) / 60 | floor))m  \(.name)"' \
+    | while read -r id rest; do
+        url=$(rc_url "$id")
+        echo "$id  $rest  ${url:-}"
+      done
+}
+cmd_w_clean() {
+  claude agents --json | jq -r '[.[] | select(.kind == "background" and .status == "idle") | .id] | unique | .[]' | while read -r id; do
+    claude stop "$id" >/dev/null && echo "stopped $id"
+  done
+}
+# Asleep it can only be woken (wake command in workers.conf), so this is only sent once nothing is left there.
+cmd_w_suspend() { sudo -n systemctl suspend --no-block; }
+
+# Each worker's statusline writes what its own sessions last saw of the account's 5h and weekly windows, which every
+# worker uses up alike, so the newest of them is the one to go by. A worker that is asleep is skipped, not woken.
+latest_limits() {
+  local w; for w in $(worker_names); do recently_down "$w" || on_worker "$w" _w-limits 2>/dev/null; done \
+    | jq -s 'map(select(.updated != null)) | max_by(.updated) // empty'
 }
 
 # Prints "ok", "wait <epoch> <why>" or "halt <why>". A value past its reset time counts as reset; no file means no data yet.
 usage_gate() {
-  [[ -f $LIMITS_FILE ]] || { echo ok; return; }
+  local j; j=$(latest_limits)
+  [[ -n $j ]] || { echo ok; return; }
   jq -r --argjson now "$(date +%s)" --argjson h "$FIVE_HOUR_MAX" --argjson w "$SEVEN_DAY_MAX" '
     def live(x): x != null and (x.resets_at // 0) > $now;
     if live(.seven_day) and .seven_day.used_percentage >= $w then
       "halt weekly usage \(.seven_day.used_percentage | floor)% >= \($w)% (resets \(.seven_day.resets_at | strflocaltime("%a %H:%M")))"
     elif live(.five_hour) and .five_hour.used_percentage >= $h then
       "wait \(.five_hour.resets_at) 5h usage \(.five_hour.used_percentage | floor)% >= \($h)%"
-    else "ok" end' "$LIMITS_FILE"
+    else "ok" end' <<<"$j"
 }
 
 usage_line() {
-  [[ -f $LIMITS_FILE ]] || { echo "usage: no data yet ($LIMITS_FILE)"; return; }
+  local j; j=$(latest_limits)
+  [[ -n $j ]] || { echo "usage: no data yet ($LIMITS_FILE on the workers)"; return; }
   jq -r --argjson now "$(date +%s)" '
     def pct(x): if x != null and (x.resets_at // 0) > $now then "\(x.used_percentage | floor)% (resets \(x.resets_at | strflocaltime("%a %H:%M")))" else "reset" end;
-    "usage: 5h \(pct(.five_hour))  7d \(pct(.seven_day))  as of \(.updated | strflocaltime("%H:%M"))"' "$LIMITS_FILE"
+    "usage: 5h \(pct(.five_hour))  7d \(pct(.seven_day))  as of \(.updated | strflocaltime("%H:%M"))"' <<<"$j"
 }
 
 # One line per candidate in run order: "next prompt <id> <text>" / "next issue <n> <urgent|-> <title>" / "skip issue <n> <why>".
@@ -185,17 +288,23 @@ plan() {
 # stopped here. The state is the one seen before the stop, since a stopped session may drop out of `claude agents`.
 # Log lines go to stderr, which the loop's log captures too.
 wait_session() {
-  local id=$1 status state="" done_since=""
+  local w=$1 id=$2 status state="" done_since="" listing unreachable=0
   while :; do
+    # A worker out of reach (network blip) says nothing about the job, so keep waiting rather than read it as gone.
+    if ! listing=$(agents "$w"); then
+      (( unreachable++ == 0 )) && echo "$(now) $w unreachable, still waiting for $id" >&2
+      sleep 60; continue
+    fi
+    unreachable=0
     # One listing per poll, so status and state come from the same moment.
     status=""; state=""
-    read -r status state < <(agents | jq -r --arg id "$id" '.[] | select(.id == $id) | "\(.status) \(.state // "")"')
+    read -r status state < <(jq -r --arg id "$id" '.[] | select(.id == $id) | "\(.status) \(.state // "")"' <<<"$listing")
     [[ $status == busy ]] || break
     if [[ $state != done ]]; then done_since=""
     elif [[ -z $done_since ]]; then done_since=$(date +%s)
     elif (( $(date +%s) - done_since >= DONE_BUSY_GRACE )); then
       echo "$(now) $id done but still busy for $(( ($(date +%s) - done_since) / 60 ))m (hung child process?); stopping it" >&2
-      if claude stop "$id" >/dev/null 2>&1; then echo "done true"; return; fi
+      if on_worker "$w" _w-stop "$id" >/dev/null 2>&1; then echo "done true"; return; fi
       echo "$(now) could not stop $id (autopilot clean)" >&2
       break
     fi
@@ -207,14 +316,15 @@ wait_session() {
 # Waits for a launched job and acts on how it ended. Returns 1 when the loop must stop launching (HALTED), else 0.
 # Runs inside cmd_loop: it reads dir, st and name, updates api_failures, and calls record and end_loop from there.
 finish_job() {
-  local kind=$1 ref=$2 id=$3 label=$4 started=$5 prompt=$6
+  local kind=$1 ref=$2 id=$3 label=$4 started=$5 prompt=$6 w=$7
   local state stopped elapsed issue
-  # Waiting for our own session keeps each loop to one slot, leaving the other for a second repo's loop.
-  read -r state stopped <<<"$(wait_session "$id")"
+  # Waiting for our own session keeps each loop to one slot, leaving the others for other repos' loops.
+  read -r state stopped <<<"$(wait_session "$w" "$id")"
   # A session stopped by wait_session needs no second stop (it would only log a failure).
-  stop_job() { $stopped || claude stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id (autopilot clean)"; }
+  stop_job() { $stopped || on_worker "$w" _w-stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id on $w (autopilot clean)"; }
+  said() { local s; s=$(on_worker "$w" _w-said "$id" | cut -f2-); echo "${s:-(transcript なし)}"; }
   elapsed=$(( $(date +%s) - started ))
-  echo "$(now) $kind $ref $id idle (state: $state, $((elapsed / 60))m)"
+  echo "$(now) $kind $ref $id on $w idle (state: $state, $((elapsed / 60))m)"
   rm -f "$st/running"
   issue=$(job_issue "$kind" "$ref" "$prompt")
   local outcome=""; [[ -n $issue ]] && outcome=$'\n'"$(issue_outcome "$dir" "$issue")"
@@ -236,7 +346,7 @@ finish_job() {
     return 0
   fi
   # An API error is written as an ordinary assistant turn, so the session reads as blocked or done like a question would.
-  local tf api_error=""; tf=$(transcript "$id"); [[ -n $tf ]] && api_error=$(last_said "$tf" | cut -f1)
+  local api_error; api_error=$(on_worker "$w" _w-said "$id" | cut -f1)
   if ! $closed && [[ -n $api_error && $api_error != - ]]; then
     stop_job
     requeue "$kind" "$ref"
@@ -251,25 +361,25 @@ finish_job() {
     fi
     end_loop "HALTED: $kind $ref hit an API error ($api_error, $api_failures in a row). Queued again; not launching more."
     record "failed  $ref_line (API $api_error, $api_failures in a row)"
-    notify_hitl HALTED "${label:0:80}$outcome" "API エラー（$api_error）が $api_failures 回続いたので loop は止めた。ジョブは積み直してある。最後の発言: $(said "$id")" \
+    notify_hitl HALTED "${label:0:80}$outcome" "API エラー（$api_error）が $api_failures 回続いたので loop は止めた。ジョブは積み直してある。最後の発言: $(said)" \
       "API の復旧（または設定）を確かめて autopilot start $name"
     return 1
   fi
   # A question is about this issue only; the next one won't hit the same wall. `taken` keeps it out of the next plan.
   if ! $closed && [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
-    echo "$(now) $kind $ref blocked on a question, skipping. answer: claude attach $id"
-    record "blocked $ref_line (claude attach $id)"
+    echo "$(now) $kind $ref blocked on a question, skipping. answer: $(attach_hint "$w" "$id")"
+    record "blocked $ref_line ($(attach_hint "$w" "$id"))"
     api_failures=0
-    notify_hitl blocked "${label:0:80}$outcome" "worker が入力待ちで止まった（loop は次へ進んでいる）。最後の発言: $(said "$id")" \
-      "worker の問いに答える" "$(rc_url "$id")"
+    notify_hitl blocked "${label:0:80}$outcome" "worker（$w）が入力待ちで止まった（loop は次へ進んでいる）。最後の発言: $(said)" \
+      "worker の問いに答える" "$(on_worker "$w" _w-rc "$id")"
     return 0
   fi
   if ! $closed && { [[ $state != done ]] || (( elapsed < MIN_JOB_SECONDS )); }; then
-    end_loop "HALTED: $kind $ref ended in state $state after ${elapsed}s (5h limit, error or a question?). Not launching more."
-    echo "    see: claude logs $id   answer: claude attach $id   then: autopilot start $name"
-    record "failed  $ref_line (state $state, claude attach $id)"
-    notify_hitl HALTED "${label:0:80}$outcome" "state $state、$((elapsed / 60))m で終わり loop は止めた。最後の発言: $(said "$id")" \
-      "原因を見て、続けるなら autopilot start $name" "$(rc_url "$id")"
+    end_loop "HALTED: $kind $ref ended in state $state after ${elapsed}s on $w (5h limit, error or a question?). Not launching more."
+    echo "    see: claude logs $id on $w   answer: $(attach_hint "$w" "$id")   then: autopilot start $name"
+    record "failed  $ref_line (state $state, $(attach_hint "$w" "$id"))"
+    notify_hitl HALTED "${label:0:80}$outcome" "$w で state $state、$((elapsed / 60))m で終わり loop は止めた。最後の発言: $(said)" \
+      "原因を見て、続けるなら autopilot start $name" "$(on_worker "$w" _w-rc "$id")"
     return 1
   fi
   # A finished session holds ~300MB while idle and nothing is left to answer in it; blocked/HALTED ones stay for attach.
@@ -293,22 +403,25 @@ cmd_loop() {
   # A job launched by an earlier loop (stopped, then started again) still counts as ours: run after it, not beside it,
   # and judge it like our own, or its outcome is lost and its idle session keeps its memory.
   if [[ -f $st/running ]]; then
-    local prev_kind prev_ref prev_id prev_prompt prev_label prev_started
-    read -r prev_kind prev_ref prev_id <"$st/running"
+    local prev_kind prev_ref prev_id prev_w prev_prompt prev_label prev_started
+    read -r prev_kind prev_ref prev_id prev_w <"$st/running"
+    prev_w=${prev_w:-$HOST}
     prev_started=$(stat -c %Y "$st/running")
     if [[ $prev_kind == prompt ]]; then
       prev_prompt=$(cat "$st/done/$prev_ref.prompt" 2>/dev/null); prev_label="$name ${prev_prompt%%$'\n'*}"
     else
       prev_prompt="$skill $prev_ref"; prev_label="$name#$prev_ref $(cd "$dir" && gh issue view "$prev_ref" --json title -q .title)"
     fi
-    local prev_status; prev_status=$(session_field "$prev_id" status)
+    # Unreachable falls through to finish_job, which waits for the worker to answer.
+    local prev_status="?" prev_listing
+    prev_listing=$(agents "$prev_w") && prev_status=$(jq -r --arg id "$prev_id" '.[] | select(.id == $id) | .status' <<<"$prev_listing")
     # Gone between loops means someone stopped it by hand (claude stop, autopilot clean): nothing left to judge it by.
     if [[ -z $prev_status ]]; then
-      echo "$(now) $prev_kind $prev_ref ($prev_id) from the previous loop is gone, not judging it"
+      echo "$(now) $prev_kind $prev_ref ($prev_id on $prev_w) from the previous loop is gone, not judging it"
       rm -f "$st/running"
     else
-      [[ $prev_status == busy ]] && echo "$(now) waiting for $prev_kind $prev_ref ($prev_id) launched by the previous loop"
-      finish_job "$prev_kind" "$prev_ref" "$prev_id" "$prev_label" "$prev_started" "$prev_prompt" || halted=true
+      [[ $prev_status == busy ]] && echo "$(now) waiting for $prev_kind $prev_ref ($prev_id on $prev_w) launched by the previous loop"
+      finish_job "$prev_kind" "$prev_ref" "$prev_id" "$prev_label" "$prev_started" "$prev_prompt" "$prev_w" || halted=true
     fi
   fi
   while ! $halted; do
@@ -340,10 +453,10 @@ cmd_loop() {
       sleep $(( until_epoch - $(date +%s) + 60 ))
       continue
     fi
-    local rc
+    local rc launched w
     while :; do
-      id=$(try_launch "$dir" "$prompt" "${label:0:80}"); rc=$?
-      (( rc == 0 )) && break
+      launched=$(try_launch "$name" "$prompt" "${label:0:80}"); rc=$?
+      (( rc == 0 )) && { read -r w id <<<"$launched"; break; }
       if (( rc == 2 )); then
         end_loop "HALTED: could not launch $kind $ref (see the launch error above). Not launching more."
         record "failed  ${label:0:80} (claude refused to launch)"
@@ -355,13 +468,14 @@ cmd_loop() {
       sleep 60
     done
     if [[ $kind == prompt ]]; then mkdir -p "$st/done"; mv "$st/queue/$ref.prompt" "$st/done/"; else echo "$ref" >>"$st/taken"; sed -i "/^${ref}\$/d" "$st/resume" 2>/dev/null; fi
-    echo "$kind $ref $id" >"$st/running"
-    echo "$(now) $kind $ref launched as $id"
+    echo "$kind $ref $id $w" >"$st/running"
+    echo "$(now) $kind $ref launched as $id on $w"
     local issue; issue=$(job_issue "$kind" "$ref" "$prompt")
-    notify "[start] ${label:0:80} ($id)${issue:+$'\n'<$(cd "$dir" && gh issue view "$issue" --json url -q .url)>}"
-    finish_job "$kind" "$ref" "$id" "$label" "$(date +%s)" "$prompt" || break
+    notify "[start] ${label:0:80} ($id on $w)${issue:+$'\n'<$(cd "$dir" && gh issue view "$issue" --json url -q .url)>}"
+    finish_job "$kind" "$ref" "$id" "$label" "$(date +%s)" "$prompt" "$w" || break
   done
   rm -f "$st/running" "$st/loop"
+  sleep_idle_workers "$name"
   if [[ -s $digest ]]; then notify "[summary] $name"$'\n'"$(cat "$digest")"; fi
   rm -f "$digest"
 }
@@ -459,7 +573,6 @@ cmd_rm() {
 
 cmd_ls() {
   local name st
-  local agents_json; agents_json=$(agents)
   usage_line
   for name in $(project_names); do
     [[ -d $(project_path "$name")/.git ]] || { echo "== $name  not ready (autopilot projects)"; continue; }
@@ -470,21 +583,24 @@ cmd_ls() {
       echo "== $name  loop: stopped$([[ -f $st/paused ]] && echo " (paused: start will hold until resume)")  last: $(cat "$st/last-exit" 2>/dev/null || echo -)"
     fi
     if [[ -f $st/running ]]; then
-      local kind ref id; read -r kind ref id <"$st/running"
-      echo "  running  $kind $ref  $id  $(jq -r --arg id "$id" '.[] | select(.id == $id) | "\(.status)/\(.state)  \(.name)"' <<<"$agents_json")"
+      local kind ref id w; read -r kind ref id w <"$st/running"; w=${w:-$HOST}
+      echo "  running  $kind $ref  $id on $w  $(agents "$w" 2>/dev/null | jq -r --arg id "$id" '.[] | select(.id == $id) | "\(.status)/\(.state)  \(.name)"')"
     fi
     plan "$name" | sed 's/^/  /'
   done
 }
 
+# Labels are checked on the controller (they live on GitHub); clone, trust and gh login on each worker that is awake.
 cmd_projects() {
-  local name dir problems labels
+  local name dir problems labels w up=() p
+  for w in $(worker_names); do on_worker "$w" _w-mem >/dev/null 2>&1 && up+=("$w") || echo "$w: unreachable (asleep?), not checked"; done
   for name in $(project_names); do
     dir=$(project_path "$name"); problems=()
-    if [[ ! -d $dir/.git ]]; then
-      problems+=("no clone at $dir")
-    else
-      jq -e --arg p "$dir" '.projects[$p].hasTrustDialogAccepted' ~/.claude.json >/dev/null || problems+=("not trusted")
+    for w in "${up[@]}"; do
+      p=$(on_worker "$w" _w-ready "$name" | paste -sd, -)
+      [[ -n $p ]] && problems+=("$w: $p")
+    done
+    if [[ -d $dir/.git ]]; then
       labels=$(cd "$dir" && gh label list --limit 200 --json name -q '.[].name' 2>&1)
       grep -qx autopilot <<<"$labels" || problems+=("no autopilot label")
       grep -qx urgent <<<"$labels" || problems+=("no urgent label")
@@ -494,19 +610,16 @@ cmd_projects() {
   done
 }
 
-cmd_status() {
-  agents | jq -r --argjson now "$(date +%s)" '.[] | "\(.id)  \(.status)/\(.state // "-")  \((($now - .startedAt/1000) / 60 | floor))m  \(.name)"' \
-    | while read -r id rest; do
-        url=$(rc_url "$id")
-        echo "$id  $rest  ${url:-}"
-      done
-}
-
-cmd_clean() {
-  agents | jq -r '[.[] | select(.kind == "background" and .status == "idle") | .id] | unique | .[]' | while read -r id; do
-    claude stop "$id" >/dev/null && echo "stopped $id"
+# Per worker; one that is asleep is reported, not woken.
+for_each_worker() {
+  local w out
+  for w in $(worker_names); do
+    if out=$(on_worker "$w" "$@" 2>/dev/null); then echo "== $w"; [[ -n $out ]] && echo "$out"
+    else echo "== $w  unreachable (asleep?)"; fi
   done
 }
+cmd_status() { for_each_worker _w-status; }
+cmd_clean() { for_each_worker _w-clean; sleep_idle_workers; }
 
 cmd_res() {
   local mt ma sw
@@ -533,7 +646,19 @@ case "$cmd" in
   projects) cmd_projects ;;
   status) cmd_status ;;
   clean) cmd_clean ;;
-  res) cmd_res ;;
+  res) for_each_worker _w-res ;;
+  _w-agents) claude agents --json ;;
+  _w-mem) awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo ;;
+  _w-ready) cmd_w_ready "$@" ;;
+  _w-launch) cmd_w_launch "$@" ;;
+  _w-stop) claude stop "$1" ;;
+  _w-rc) rc_url "$1" ;;
+  _w-said) cmd_w_said "$1" ;;
+  _w-limits) cmd_w_limits ;;
+  _w-status) cmd_w_status ;;
+  _w-clean) cmd_w_clean ;;
+  _w-res) cmd_res ;;
+  _w-suspend) cmd_w_suspend ;;
   _loop) cmd_loop "$@" ;;
   _last-said) last_said "$1" ;;
   *) sed -n '2,19p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;

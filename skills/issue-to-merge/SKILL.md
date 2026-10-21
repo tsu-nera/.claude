@@ -12,6 +12,12 @@ GitHub Issueを入力に、設計→実装→PR作成→独立レビュー→mer
 ## 使い方
 `/issue-to-merge <issue番号>`
 
+## 実行場所（対話セッションから起動された時だけ）
+
+無人 worker（system prompt に「無人の worker」とある）でなければ、着手前に autopilot スキルの1段目で行き先を決める。
+repo が `~/.claude/skills/autopilot/projects.conf` にあり、引数や会話に「ここで」が無く、iiyama でやる仕事に当たらなければ、
+実装せず `autopilot add <repo> <番号>` で積み、loop が止まっていれば `autopilot start <repo>`、`autopilot watch <repo>` を張って1行報告して終える。
+
 ## /issue-to-pr との違い（軸は「難易度」ではなく「レビュー要否」）
 
 - `/issue-to-merge`: **設計判断もすべて委任**して merge まで自走。HITL は原則ゼロ。

@@ -54,7 +54,6 @@ last_said() {
        ([.message.content[]? | select(.type == "text") | .text] | join(" ") | gsub("\\s+"; " ") | .[0:300])]
     | select(.[1] != "") | @tsv' "$1" | tail -1
 }
-said() { local f; f=$(transcript "$1"); if [[ -n $f ]]; then last_said "$f" | cut -f2-; else echo "(transcript なし)"; fi; }
 
 # One poll of `watch`. With <seen> "-" it only checks there is a loop to watch; otherwise it prints the history lines after
 # <seen> and acks them for the loop (see notify_hitl). The last line is "@@ <lines> running" or "@@ <lines> ended <last-exit>".
