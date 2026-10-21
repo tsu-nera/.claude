@@ -48,7 +48,7 @@ autopilot status / clean / res
 - 受け入れの上限（busy 本数・空きメモリ）は worker ごとに `workers.conf` にある。mouse の値（3本・3GB）は未計測の仮置き。1つの loop は自分の1本が idle になるまで次を起動しないので、repo の数だけ loop が並走できる。
   重いのは agent でなく tsc/vitest で、repo 側の lock（xchain-arb は `prepush-checks.lock`）が直列化する前提
 - プロジェクトは `projects.conf` に定義する。追加したら各 worker に clone・`~/.claude.json` で trust・`autopilot`/`urgent` ラベル作成が要る（`autopilot projects` で点検。準備の無い worker は飛ばされ、vaio が未 trust なら `start` が止まる）
-- worker は `workers.conf` に定義する。起こし方の `wake-mouse` は vaio の `~/.local/bin`（MAC・IP 入りなので public の `~/.claude` に入れない）。loop が起こした worker は、loop が全部終わってセッションが1つも残っていなければ `sudo -n systemctl suspend` で寝かせ直す（blocked が残る間は起きたまま。`clean` の後にも見直す）。起きていたものは寝かせない
+- worker は `workers.conf` に定義する。起こし方の `wake-mouse` は vaio の `~/.local/bin`（MAC・IP 入りなので public の `~/.claude` に入れない）。loop が起こした worker は、loop が終わった時に生きたセッションが残っていなければ寝かせ直す（5秒後の suspend 予約。他の loop は止めない理由にならない＝要る時にまた起こす。blocked が残る間は起きたまま。`clean` の後にも見直す）。起きていたものは寝かせない。寝起きをまたいでも bg セッションは続きから動く（2026-10-21 確認）
 - 寝ている worker は起こせても `WAKE_WAIT`（90秒）以内に ssh が通らなければ10分間飛ばされ、その間は vaio だけで回る
 - busy の数え方・待ち方・判定はどれも `claude agents --json` を読む。形は公開された約束ではなく版で違う（id・status の有無）うえ、worker ごとに勝手に自動更新される。`start` と毎回の起動前に `_w-check` で点検し、知らない形なら HALTED で止まる（その時は `cmd_w_check` と読む側を新しい形に合わせる）
 - ジョブの実行中に worker へ15分届かない（電源・Wi-Fi・スリープ）と HALTED で #hitl に上がる。ジョブは向こうで生きている可能性があるので `running` に残し、起こして `start` すると前のジョブを待って判定してから続ける
