@@ -47,6 +47,9 @@ API_RETRY_WAITS=(600 1800)
 # A session that finished its turn (state done) but stays busy this long is held by a hung child, such as an RPC call
 # without a timeout. Waiting on it would hold the loop forever, so it is stopped and judged as done.
 DONE_BUSY_GRACE=600
+# A worker out of reach this long while running a job (powered off, Wi-Fi gone, asleep) halts the loop, so it reaches
+# #hitl instead of the loop waiting on it silently forever.
+UNREACHABLE_HALT=900
 # How long a job that needs someone waits for a watcher to pick it up before it goes to #hitl (a watch polls every 30s).
 ACK_WAIT=${AUTOPILOT_ACK_WAIT:-120}
 # Usage written by statusline-command.sh, which also renders inside the worker's background sessions.
@@ -285,18 +288,22 @@ plan() {
       done
 }
 
-# Blocks while the session is busy, then prints "<state|gone> <true|false>": the last state seen and whether it was
-# stopped here. The state is the one seen before the stop, since a stopped session may drop out of `claude agents`.
+# Blocks while the session is busy, then prints "<state|gone|unreachable> <true|false>": the last state seen and whether
+# it was stopped here. The state is the one seen before the stop, since a stopped session may drop out of `claude agents`.
 # Log lines go to stderr, which the loop's log captures too.
 wait_session() {
-  local w=$1 id=$2 status state="" done_since="" listing unreachable=0
+  local w=$1 id=$2 status state="" done_since="" listing unreachable_since=""
   while :; do
-    # A worker out of reach (network blip) says nothing about the job, so keep waiting rather than read it as gone.
+    # A short blip says nothing about the job, so keep waiting rather than read it as gone; only a long outage ends it.
     if ! listing=$(agents "$w"); then
-      (( unreachable++ == 0 )) && echo "$(now) $w unreachable, still waiting for $id" >&2
+      if [[ -z $unreachable_since ]]; then
+        unreachable_since=$(date +%s); echo "$(now) $w unreachable, still waiting for $id" >&2
+      elif (( $(date +%s) - unreachable_since >= UNREACHABLE_HALT )); then
+        echo "unreachable false"; return
+      fi
       sleep 60; continue
     fi
-    unreachable=0
+    unreachable_since=""
     # One listing per poll, so status and state come from the same moment.
     status=""; state=""
     read -r status state < <(jq -r --arg id "$id" '.[] | select(.id == $id) | "\(.status) \(.state // "")"' <<<"$listing")
@@ -345,6 +352,15 @@ finish_job() {
     stop_job
     notify "[needs-answer] ${label:0:80}: answer on the issue, then autopilot add$outcome"
     return 0
+  fi
+  # The session may still be alive there. Kept as running (with its launch time), the next start waits for it and judges it.
+  if ! $closed && [[ $state == unreachable ]]; then
+    echo "$kind $ref $id $w" >"$st/running"; touch -d "@$started" "$st/running"
+    end_loop "HALTED: $w unreachable for $((UNREACHABLE_HALT / 60))m while running $kind $ref ($id). Not launching more."
+    record "failed  $ref_line ($w unreachable, $(attach_hint "$w" "$id"))"
+    notify_hitl HALTED "${label:0:80}$outcome" "実行先の $w に $((UNREACHABLE_HALT / 60))分届かないので loop は止めた（電源・Wi-Fi・スリープ？）。ジョブは $w で生きている可能性がある" \
+      "$w を起こして（vaio で wake-mouse）autopilot start $name するか。start すると前のジョブを待って判定してから続ける"
+    return 1
   fi
   # An API error is written as an ordinary assistant turn, so the session reads as blocked or done like a question would.
   local api_error; api_error=$(on_worker "$w" _w-said "$id" | cut -f1)
