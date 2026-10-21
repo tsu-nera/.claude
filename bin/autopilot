@@ -121,8 +121,8 @@ on_worker() {
   if [[ $w == "$HOST" ]]; then "$SELF" "$@"; return; fi
   ssh -o BatchMode=yes -o ConnectTimeout=5 "$w" 'bash -ls' <<<"~/.claude/bin/autopilot $(printf '%q ' "$@")"
 }
-# Fails when the worker can't be reached, so callers can tell that from "no sessions".
-agents() { on_worker "$1" _w-agents; }
+# Fails when the worker can't be reached, so callers can tell that from "no sessions"; the rc says so, ssh's stderr would only clutter the log.
+agents() { on_worker "$1" _w-agents 2>/dev/null; }
 busy_count() { local j; j=$(agents "$1") || return 1; jq '[.[] | select(.status == "busy")] | length' <<<"$j"; }
 attach_hint() { if [[ $1 == "$HOST" ]]; then echo "claude attach $2"; else echo "ssh $1, claude attach $2"; fi; }
 recently_down() { [[ -n $(find "$STATE/down-$1" -mmin -"$DOWN_MINUTES" 2>/dev/null) ]]; }
