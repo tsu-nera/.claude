@@ -267,7 +267,8 @@ cmd_w_clean() {
   done
 }
 # Asleep it can only be woken (wake command in workers.conf), so this is only sent once nothing is left there.
-cmd_w_suspend() { sudo -n systemctl suspend --no-block; }
+# Scheduled a few seconds out: suspending right away races the ssh session that sent it (it closed 0.3s ahead once).
+cmd_w_suspend() { sudo -n systemd-run --quiet --on-active=5 systemctl suspend; }
 
 # Each worker's statusline writes what its own sessions last saw of the account's 5h and weekly windows, which every
 # worker uses up alike, so the newest of them is the one to go by. A worker that is asleep is skipped, not woken.
