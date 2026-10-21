@@ -144,15 +144,16 @@ worker_up() {
   touch "$STATE/down-$w"
   return 1
 }
-# A worker the loop woke goes back to sleep when it holds no session at all (a blocked one waits there for its answer)
-# and no other loop, which could launch there next, is running. Arg: the calling loop's own repo, which is ending.
+# A worker the loop woke goes back to sleep when no session is alive there (a blocked one waits for its answer; an entry
+# without status has no process left) and no other loop, which could launch there next, is running.
+# Arg: the calling loop's own repo, which is ending.
 sleep_idle_workers() {
   local self=${1:-} w j
   tmux ls -F '#S' 2>/dev/null | grep '^autopilot-' | grep -qvx "autopilot-$self" && return 0
   for w in $(worker_names); do
     [[ -f $STATE/woke-$w ]] || continue
     j=$(agents "$w") || continue
-    (( $(jq length <<<"$j") == 0 )) || continue
+    (( $(jq '[.[] | select(.status != null)] | length' <<<"$j") == 0 )) || continue
     on_worker "$w" _w-suspend && rm -f "$STATE/woke-$w" && echo "$(now) $w: nothing left there, suspended it"
   done
 }
