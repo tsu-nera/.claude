@@ -99,7 +99,8 @@
     "feature-dev@claude-plugins-official": false,
     "claude-code-setup@claude-plugins-official": false,
     "clangd-lsp@claude-plugins-official": false,
-    "todoist@doist": true
+    "todoist@doist": true,
+    "computer-use-linux@computer-use-linux": false
   },
   "extraKnownMarketplaces": {
     "doist": {
@@ -107,11 +108,18 @@
         "source": "github",
         "repo": "doist/todoist-mcp"
       }
+    },
+    "computer-use-linux": {
+      "source": {
+        "source": "github",
+        "repo": "agent-sh/computer-use-linux"
+      }
     }
   },
   "feedbackDrafts": "off",
   "alwaysThinkingEnabled": true,
   "effortLevel": "medium",
+  "tui": "fullscreen",
   "voice": {
     "enabled": true,
     "mode": "hold"
@@ -123,6 +131,5 @@
   "feedbackSurveyState": {
     "lastShownTime": 1754039946567
   },
-  "autoUpdates": true,
-  "tui": "fullscreen"
+  "autoUpdates": true
 }
