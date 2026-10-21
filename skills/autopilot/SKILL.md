@@ -50,6 +50,7 @@ autopilot status / clean / res
 - プロジェクトは `projects.conf` に定義する。追加したら各 worker に clone・`~/.claude.json` で trust・`autopilot`/`urgent` ラベル作成が要る（`autopilot projects` で点検。準備の無い worker は飛ばされ、vaio が未 trust なら `start` が止まる）
 - worker は `workers.conf` に定義する。起こし方の `wake-mouse` は vaio の `~/.local/bin`（MAC・IP 入りなので public の `~/.claude` に入れない）。loop が起こした worker は、loop が全部終わってセッションが1つも残っていなければ `sudo -n systemctl suspend` で寝かせ直す（blocked が残る間は起きたまま。`clean` の後にも見直す）。起きていたものは寝かせない
 - 寝ている worker は起こせても `WAKE_WAIT`（90秒）以内に ssh が通らなければ10分間飛ばされ、その間は vaio だけで回る
+- busy の数え方・待ち方・判定はどれも `claude agents --json` を読む。形は公開された約束ではなく版で違う（id・status の有無）うえ、worker ごとに勝手に自動更新される。`start` と毎回の起動前に `_w-check` で点検し、知らない形なら HALTED で止まる（その時は `cmd_w_check` と読む側を新しい形に合わせる）
 - ジョブの実行中に worker へ15分届かない（電源・Wi-Fi・スリープ）と HALTED で #hitl に上がる。ジョブは向こうで生きている可能性があるので `running` に残し、起こして `start` すると前のジョブを待って判定してから続ける
 - memory は同期せず、worker は auto memory を切って起動する（`--settings`。bg daemon は呼び出し側の環境変数を渡さない）。worker は Issue 本文と repo の規約だけで動く（ready Issue は自己完結の粒度で書く）。残す知見は PR 本文に書かせ、iiyama 側で拾う
 - skill や CLI の改訂は `~/.claude` を push してから届く（`start` が vaio で、ジョブの起動時に他の worker で pull する）

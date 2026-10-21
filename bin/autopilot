@@ -162,16 +162,21 @@ sleep_idle_workers() {
 }
 # Check and launch share one lock, held until the new session shows as busy, so two loops can't both pass the check
 # before either session is counted. Tries the workers in workers.conf order and prints "<worker> <session id>".
-# Returns 1 when no worker has room (retry later) and 2 when claude itself refused to launch (retrying would fail the
-# same way), with the reason on stderr. A worker that is unreachable or lacks the project is passed over, not fatal.
+# Returns 1 when no worker has room (retry later), 2 when claude itself refused to launch (retrying would fail the
+# same way) and 4 when `claude agents --json` no longer reads as expected, with the reason on stderr.
+# A worker that is unreachable or lacks the project is passed over, not fatal.
 try_launch() {
   local name=$1 prompt=$2 label=$3
   mkdir -p "$STATE"
   (
     flock 8
-    local w busy avail id rc why=()
+    local w busy avail id rc problems why=()
     for w in $(worker_names); do
       worker_up "$w" || { why+=("$w down"); continue; }
+      # Checked before every launch, not once at start: claude updates itself while a loop runs for hours.
+      if problems=$(on_worker "$w" _w-check) && [[ -n $problems ]]; then
+        echo "$(now) agents format: $w $(paste -sd';' - <<<"$problems")" >&2; exit 4
+      fi
       if ! busy=$(busy_count "$w") || ! avail=$(on_worker "$w" _w-mem); then why+=("$w unreachable"); continue; fi
       if (( busy >= $(worker_field "$w" 2) || avail < $(worker_field "$w" 3) )); then
         why+=("$w busy $busy/$(worker_field "$w" 2) mem ${avail}MB"); continue
@@ -182,7 +187,17 @@ try_launch() {
         3|255) why+=("$w not usable"); continue ;;
         *) exit 2 ;;
       esac
-      for _ in $(seq 24); do (( $(busy_count "$w" || echo 0) > busy )) && break; sleep 5; done
+      # Listed under its id at least once, the session proves the listing still names it the way wait_session looks it up.
+      local seen=false st_now
+      for _ in $(seq 24); do
+        st_now=$(agents "$w" 2>/dev/null | jq -r --arg id "$id" '.[] | select(.id == $id) | .status // "-"')
+        [[ -n $st_now ]] && seen=true
+        [[ $st_now == busy ]] && break
+        sleep 5
+      done
+      if ! $seen; then
+        echo "$(now) agents format: $w launched $id, but claude agents --json never listed that id (it runs unwatched there)" >&2; exit 4
+      fi
       echo "$w $id"; exit 0
     done
     echo "$(now) no room: ${why[*]}" >&2; exit 1
@@ -222,6 +237,22 @@ cmd_w_launch() {
   echo "$id"
 }
 cmd_w_said() { local f; f=$(transcript "$1"); [[ -n $f ]] && last_said "$f"; }
+# What autopilot reads from `claude agents --json`, one line per departure (nothing when it all holds). Its shape is not
+# a documented contract and has differed between versions. A live background session has id, status and state; one
+# whose process is gone keeps id and state but drops status; interactive ones carry no id.
+cmd_w_check() {
+  local j; j=$(claude agents --json 2>&1) || { echo "claude agents --json failed: ${j:0:200}"; return; }
+  jq -r --arg v "$(claude --version 2>/dev/null | cut -d' ' -f1)" '
+    def known(xs): . == null or (. as $x | xs | index($x) != null);
+    if type != "array" then "claude \($v): not a list" else
+      (.[] | select(.kind == "background") |
+        if .id == null then "claude \($v): background session \(.name // "?") has no id"
+        elif .status | known(["busy", "idle", "waiting"]) | not then "claude \($v): unknown status \(.status)"
+        elif .state | known(["working", "blocked", "done", "failed", "stopped"]) | not then "claude \($v): unknown state \(.state)"
+        else empty end),
+      (.[] | select(.kind != "background" and .kind != "interactive") | "claude \($v): unknown kind \(.kind)")
+    end' <<<"$j" 2>&1 | sort -u
+}
 cmd_w_limits() { [[ -f $LIMITS_FILE ]] && cat "$LIMITS_FILE"; }
 cmd_w_status() {
   claude agents --json | jq -r --argjson now "$(date +%s)" '.[] | "\(.id)  \(.status)/\(.state // "-")  \((($now - .startedAt/1000) / 60 | floor))m  \(.name)"' \
@@ -481,6 +512,14 @@ cmd_loop() {
           "原因（model・trust など）を直して autopilot start $name するか"
         break 2
       fi
+      # Busy counts, waits and judgments all read that listing, so going on would misjudge every job from here.
+      if (( rc == 4 )); then
+        end_loop "HALTED: claude agents --json changed (see the agents format line above). Not launching more."
+        record "failed  ${label:0:80} (claude agents --json changed)"
+        notify_hitl HALTED "${label:0:80}" "claude の更新で claude agents --json の形が変わったらしく、loop は止めた。$(grep -a 'agents format' "$st/log" | tail -1 | cut -c1-300)" \
+          "bin/autopilot の読み方（_w-check と agents を読む箇所）を新しい形に合わせて autopilot start $name するか"
+        break 2
+      fi
       if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then end_loop "deadline reached"; break 2; fi
       sleep 60
     done
@@ -524,6 +563,13 @@ cmd_start() {
     || die "$dir is not trusted: run claude there once and accept"
   gh auth status >/dev/null 2>&1 || die "gh is not logged in"
   git -C ~/.claude pull --ff-only -q || echo "warning: ~/.claude pull failed, skills may be stale" >&2
+  # Fails fast here too, rather than after the loop's first wait. A worker asleep is checked when it is woken.
+  local w problems
+  for w in $(worker_names); do
+    recently_down "$w" && continue
+    problems=$(on_worker "$w" _w-check 2>/dev/null) || continue
+    [[ -z $problems ]] || die "claude agents --json on $w does not read as expected: $(paste -sd';' - <<<"$problems")"
+  done
   if [[ -n "$until" ]]; then
     deadline=$(date -d "$until" +%s) || die "bad --until: $until"
     (( deadline > $(date +%s) )) || deadline=$(date -d "tomorrow $until" +%s)
@@ -671,6 +717,7 @@ case "$cmd" in
   _w-stop) claude stop "$1" ;;
   _w-rc) rc_url "$1" ;;
   _w-said) cmd_w_said "$1" ;;
+  _w-check) cmd_w_check ;;
   _w-limits) cmd_w_limits ;;
   _w-status) cmd_w_status ;;
   _w-clean) cmd_w_clean ;;
