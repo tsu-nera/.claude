@@ -377,7 +377,7 @@ finish_job() {
   # short the job (#3988 merged in 3m), so it skips both checks below.
   local closed=false
   if [[ -n $issue ]] && issue_closed_by_pr "$dir" "$issue"; then closed=true; fi
-  local ref_line="${label:0:80}${issue:+ <$(issue_url "$dir" "$issue")>}"
+  local ref_line="${label:0:80} ($w)${issue:+ <$(issue_url "$dir" "$issue")>}"
   if $closed; then
     local decided=""; issue_has_decision "$dir" "$issue" && decided=" (agent decided: see 追加決定)"
     record "merged  $ref_line$decided"
@@ -387,7 +387,7 @@ finish_job() {
     echo "$(now) $kind $ref needs an answer on the issue, skipping"
     record "answer  $ref_line"
     stop_job
-    notify "[needs-answer] ${label:0:80}: answer on the issue, then autopilot add$outcome"
+    notify "[needs-answer] ${label:0:80} ($w): answer on the issue, then autopilot add$outcome"
     return 0
   fi
   # The session may still be alive there. Kept as running (with its launch time), the next start waits for it and judges it.
@@ -395,7 +395,7 @@ finish_job() {
     echo "$kind $ref $id $w" >"$st/jobs/$id"; touch -d "@$started" "$st/jobs/$id"
     end_loop "HALTED: $w unreachable for $((UNREACHABLE_HALT / 60))m while running $kind $ref ($id). Not launching more."
     record "failed  $ref_line ($w unreachable, $(attach_hint "$w" "$id"))"
-    notify_hitl HALTED "${label:0:80}$outcome" "実行先の $w に $((UNREACHABLE_HALT / 60))分届かないので loop は止めた（電源・Wi-Fi・スリープ？）。ジョブは $w で生きている可能性がある" \
+    notify_hitl HALTED "${label:0:80} ($w)$outcome" "実行先の $w に $((UNREACHABLE_HALT / 60))分届かないので loop は止めた（電源・Wi-Fi・スリープ？）。ジョブは $w で生きている可能性がある" \
       "$w を起こして（vaio で wake-mouse）autopilot start $name するか。start すると前のジョブを待って判定してから続ける"
     return 1
   fi
@@ -409,13 +409,13 @@ finish_job() {
     if [[ -n $retry_in ]]; then
       echo "$(now) $kind $ref hit an API error ($api_error), queued again; next launch in $((retry_in / 60))m"
       record "retry   $ref_line (API $api_error, $api_failures in a row)"
-      notify "[retry] ${label:0:80}: API $api_error, queued again in $((retry_in / 60))m"
+      notify "[retry] ${label:0:80} ($w): API $api_error, queued again in $((retry_in / 60))m"
       echo $(( $(date +%s) + retry_in )) >"$st/hold-until"
       return 0
     fi
     end_loop "HALTED: $kind $ref hit an API error ($api_error, $api_failures in a row). Queued again; not launching more."
     record "failed  $ref_line (API $api_error, $api_failures in a row)"
-    notify_hitl HALTED "${label:0:80}$outcome" "API エラー（$api_error）が $api_failures 回続いたので loop は止めた。ジョブは積み直してある。最後の発言: $(said)" \
+    notify_hitl HALTED "${label:0:80} ($w)$outcome" "API エラー（$api_error）が $api_failures 回続いたので loop は止めた。ジョブは積み直してある。最後の発言: $(said)" \
       "API の復旧（または設定）を確かめて autopilot start $name"
     return 1
   fi
@@ -424,7 +424,7 @@ finish_job() {
     echo "$(now) $kind $ref blocked on a question, skipping. answer: $(attach_hint "$w" "$id")"
     record "blocked $ref_line ($(attach_hint "$w" "$id"))"
     rm -f "$st/api-failures"
-    notify_hitl blocked "${label:0:80}$outcome" "worker（$w）が入力待ちで止まった（loop は次へ進んでいる）。最後の発言: $(said)" \
+    notify_hitl blocked "${label:0:80} ($w)$outcome" "worker（$w）が入力待ちで止まった（loop は次へ進んでいる）。最後の発言: $(said)" \
       "worker の問いに答える" "$(on_worker "$w" _w-rc "$id")"
     return 0
   fi
@@ -432,7 +432,7 @@ finish_job() {
     end_loop "HALTED: $kind $ref ended in state $state after ${elapsed}s on $w (5h limit, error or a question?). Not launching more."
     echo "    see: claude logs $id on $w   answer: $(attach_hint "$w" "$id")   then: autopilot start $name"
     record "failed  $ref_line (state $state, $(attach_hint "$w" "$id"))"
-    notify_hitl HALTED "${label:0:80}$outcome" "$w で state $state、$((elapsed / 60))m で終わり loop は止めた。最後の発言: $(said)" \
+    notify_hitl HALTED "${label:0:80} ($w)$outcome" "$w で state $state、$((elapsed / 60))m で終わり loop は止めた。最後の発言: $(said)" \
       "原因を見て、続けるなら autopilot start $name" "$(on_worker "$w" _w-rc "$id")"
     return 1
   fi
@@ -440,7 +440,7 @@ finish_job() {
   stop_job
   $closed || record "open    $ref_line"
   rm -f "$st/api-failures"
-  notify "[done] ${label:0:80}: $((elapsed / 60))m$outcome"
+  notify "[done] ${label:0:80} ($w): $((elapsed / 60))m$outcome"
 }
 
 cmd_loop() {
