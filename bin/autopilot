@@ -8,8 +8,8 @@
 #   autopilot add <repo> <issue#> [--urgent]         label the issue autopilot (and urgent)
 #   autopilot add <repo> <prompt>                    queue a free prompt, e.g. "/task-to-merge ..."
 #   autopilot rm <repo> <issue#|prompt-id>           unlabel the issue / drop the queued prompt
-#   autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--model sonnet]
-#                                                    work through the repo's queue in tmux, one job at a time
+#   autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--model sonnet] [--parallel N]
+#                                                    work through the repo's queue in tmux, up to N jobs at once (default 2)
 #   autopilot stop <repo|all>                        stop launching more (running sessions keep going)
 #   autopilot pause <repo|all> / resume <repo|all>   hold / release new launches; the loop and its running job stay
 #   autopilot watch <repo>                           block until a job is blocked / needs an answer / failed or the loop ends
@@ -60,6 +60,9 @@ LIMITS_FILE=${AUTOPILOT_LIMITS_FILE:-$HOME/.cache/claude-rate-limits.json}
 WEBHOOK_FILE=$HOME/.config/autopilot/discord-webhook
 MODEL=""          # empty: settings.json default; `start --model` overrides per loop
 FIVE_HOUR_MAX=90  # default; `start --5h-max` lowers it to leave room for interactive use in the same window
+# Jobs one loop keeps in flight. Two lets mouse and vaio each take one; order between issues comes from GitHub's
+# blocked-by (plan skips an issue with an open blocker), and queued prompts, which can't state one, run one at a time.
+PARALLEL=2
 SEVEN_DAY_MAX=98
 PROJECTS_CONF=$HOME/.claude/skills/autopilot/projects.conf
 STATE=$HOME/.local/state/autopilot
@@ -111,7 +114,16 @@ repo_dir() {
   [[ -d $d/.git ]] || die "no clone at $d"
   echo "$d"
 }
-repo_state() { local s=$STATE/${1##*/}; mkdir -p "$s/queue"; echo "$s"; }
+repo_state() { local s=$STATE/${1##*/}; mkdir -p "$s/queue" "$s/jobs"; echo "$s"; }
+# Jobs in flight live in $st/jobs, one file per session id holding "<kind> <ref> <id> <worker>", mtime = launch time.
+# Loops before parallel kept a single $st/running; it is moved in so the job is still judged.
+adopt_legacy_running() {
+  local st=$1 id
+  [[ -f $st/running ]] || return 0
+  read -r _ _ id _ <"$st/running"
+  mv "$st/running" "$st/jobs/$id"
+}
+jobs_in_flight() { find "$1/jobs" -type f | wc -l; }
 worker_names() { grep -v '^\s*#' "$WORKERS_CONF" | awk 'NF {print $1}'; }
 worker_field() { awk -v n="$1" -v i="$2" '$1 == n {print $i}' "$WORKERS_CONF"; }
 # Runs an autopilot command on a worker: in place on the controller, else over ssh. The command goes in on stdin so the
@@ -164,7 +176,9 @@ sleep_idle_workers() {
   ) 8>"$STATE/launch.lock"
 }
 # Check and launch share one lock, held until the new session shows as busy, so two loops can't both pass the check
-# before either session is counted. Tries the workers in workers.conf order and prints "<worker> <session id>".
+# before either session is counted. Prints "<worker> <session id>". Among workers with room the one with the fewest busy
+# sessions goes first (workers.conf order on ties), so a loop's parallel jobs land on different machines: on one machine
+# their tsc runs queue up behind the repo's pre-push lock.
 # Returns 1 when no worker has room (retry later), 2 when claude itself refused to launch (retrying would fail the
 # same way) and 4 when `claude agents --json` no longer reads as expected, with the reason on stderr.
 # A worker that is unreachable or lacks the project is passed over, not fatal.
@@ -173,7 +187,7 @@ try_launch() {
   mkdir -p "$STATE"
   (
     flock 8
-    local w busy avail id rc problems why=()
+    local w busy avail id rc problems why=() i=0 room=()
     for w in $(worker_names); do
       worker_up "$w" || { why+=("$w down"); continue; }
       # Checked before every launch, not once at start: claude updates itself while a loop runs for hours.
@@ -184,7 +198,11 @@ try_launch() {
       if (( busy >= $(worker_field "$w" 2) || avail < $(worker_field "$w" 3) )); then
         why+=("$w busy $busy/$(worker_field "$w" 2) mem ${avail}MB"); continue
       fi
-      id=$(on_worker "$w" _w-launch "$name" "$label" "$MODEL" "$prompt"); rc=$?
+      room+=("$busy $((i++)) $w")
+    done
+    for w in $(printf '%s\n' "${room[@]}" | sort -n -k1,1 -k2,2 | awk '{print $3}'); do
+      # 8>&-: a session started on the controller would otherwise inherit the lock and hold it for its whole run.
+      id=$(on_worker "$w" _w-launch "$name" "$label" "$MODEL" "$prompt" 8>&-); rc=$?
       case $rc in
         0) ;;
         3|255) why+=("$w not usable"); continue ;;
@@ -315,6 +333,9 @@ plan() {
         | .[] | "\(.n) \(if .u then "urgent" else "-" end) \(.t)"' \
     | while read -r n u title; do
         if grep -qx "$n" "$st/taken" 2>/dev/null; then echo "skip issue $n already launched (autopilot add to retry)"; continue; fi
+        # blocked_by counts only open blockers. With jobs in parallel, this is what keeps 4393 from starting before 4392 merges.
+        local blockers; blockers=$(cd "$dir" && gh api "repos/{owner}/{repo}/issues/$n" -q '.issue_dependencies_summary.blocked_by // 0')
+        if (( ${blockers:-0} > 0 )); then echo "skip issue $n blocked by $blockers open issue(s)"; continue; fi
         # Re-added after an answer: the PR it left behind is where /issue-to-merge resumes, not a reason to skip.
         if grep -qx "$n" "$st/resume" 2>/dev/null; then echo "next issue $n $u $title"; continue; fi
         # A linked PR means someone (a manual /issue-to-merge, an earlier loop) already took it.
@@ -357,18 +378,18 @@ wait_session() {
 }
 
 # Waits for a launched job and acts on how it ended. Returns 1 when the loop must stop launching (HALTED), else 0.
-# Runs inside cmd_loop: it reads dir, st and name, updates api_failures, and calls record and end_loop from there.
+# Runs in the background of cmd_loop, one per job: it reads dir, st and name and calls record and end_loop from there.
+# What it tells the loop goes through files in $st, since a background subshell can't set the loop's variables.
 finish_job() {
   local kind=$1 ref=$2 id=$3 label=$4 started=$5 prompt=$6 w=$7
-  local state stopped elapsed issue
-  # Waiting for our own session keeps each loop to one slot, leaving the others for other repos' loops.
+  local state stopped elapsed issue api_failures
   read -r state stopped <<<"$(wait_session "$w" "$id")"
   # A session stopped by wait_session needs no second stop (it would only log a failure).
   stop_job() { $stopped || on_worker "$w" _w-stop "$id" >/dev/null 2>&1 || echo "$(now) could not stop $id on $w (autopilot clean)"; }
   said() { local s; s=$(on_worker "$w" _w-said "$id" | cut -f2-); echo "${s:-(transcript なし)}"; }
   elapsed=$(( $(date +%s) - started ))
   echo "$(now) $kind $ref $id on $w idle (state: $state, $((elapsed / 60))m)"
-  rm -f "$st/running"
+  rm -f "$st/jobs/$id"
   issue=$(job_issue "$kind" "$ref" "$prompt")
   local outcome=""; [[ -n $issue ]] && outcome=$'\n'"$(issue_outcome "$dir" "$issue")"
   # A closed issue is proof of success whatever the state label says (#3820 merged, then read as "working") or however
@@ -390,7 +411,7 @@ finish_job() {
   fi
   # The session may still be alive there. Kept as running (with its launch time), the next start waits for it and judges it.
   if ! $closed && [[ $state == unreachable ]]; then
-    echo "$kind $ref $id $w" >"$st/running"; touch -d "@$started" "$st/running"
+    echo "$kind $ref $id $w" >"$st/jobs/$id"; touch -d "@$started" "$st/jobs/$id"
     end_loop "HALTED: $w unreachable for $((UNREACHABLE_HALT / 60))m while running $kind $ref ($id). Not launching more."
     record "failed  $ref_line ($w unreachable, $(attach_hint "$w" "$id"))"
     notify_hitl HALTED "${label:0:80}$outcome" "実行先の $w に $((UNREACHABLE_HALT / 60))分届かないので loop は止めた（電源・Wi-Fi・スリープ？）。ジョブは $w で生きている可能性がある" \
@@ -402,13 +423,13 @@ finish_job() {
   if ! $closed && [[ -n $api_error && $api_error != - ]]; then
     stop_job
     requeue "$kind" "$ref"
-    api_failures=$(( api_failures + 1 ))
+    api_failures=$(( $(cat "$st/api-failures" 2>/dev/null || echo 0) + 1 )); echo "$api_failures" >"$st/api-failures"
     local retry_in; retry_in=$(api_retry_wait "$api_error" "$api_failures")
     if [[ -n $retry_in ]]; then
       echo "$(now) $kind $ref hit an API error ($api_error), queued again; next launch in $((retry_in / 60))m"
       record "retry   $ref_line (API $api_error, $api_failures in a row)"
       notify "[retry] ${label:0:80}: API $api_error, queued again in $((retry_in / 60))m"
-      sleep "$retry_in"
+      echo $(( $(date +%s) + retry_in )) >"$st/hold-until"
       return 0
     fi
     end_loop "HALTED: $kind $ref hit an API error ($api_error, $api_failures in a row). Queued again; not launching more."
@@ -421,7 +442,7 @@ finish_job() {
   if ! $closed && [[ $state == blocked ]] && (( elapsed >= MIN_JOB_SECONDS )); then
     echo "$(now) $kind $ref blocked on a question, skipping. answer: $(attach_hint "$w" "$id")"
     record "blocked $ref_line ($(attach_hint "$w" "$id"))"
-    api_failures=0
+    rm -f "$st/api-failures"
     notify_hitl blocked "${label:0:80}$outcome" "worker（$w）が入力待ちで止まった（loop は次へ進んでいる）。最後の発言: $(said)" \
       "worker の問いに答える" "$(on_worker "$w" _w-rc "$id")"
     return 0
@@ -437,28 +458,33 @@ finish_job() {
   # A finished session holds ~300MB while idle and nothing is left to answer in it; blocked/HALTED ones stay for attach.
   stop_job
   $closed || record "open    $ref_line"
-  api_failures=0
+  rm -f "$st/api-failures"
   notify "[done] ${label:0:80}: $((elapsed / 60))m$outcome"
 }
 
 cmd_loop() {
   local name=$1 urgent_only=$2 deadline=$3 skill=$4 st dir
-  FIVE_HOUR_MAX=$5 MODEL=${6:-}
+  FIVE_HOUR_MAX=$5 MODEL=${6:-}; local parallel=${7:-$PARALLEL}
   st=$(repo_state "$name"); dir=$(repo_dir "$name")
   touch "$st/taken" "$st/history"
-  local api_failures=0 halted=false
+  rm -f "$st/halt" "$st/api-failures" "$st/hold-until"
   # Read once when the loop ends: the jobs run overnight, so one summary in the morning beats a notification per job.
   local digest; digest=$(mktemp)
   # Outcomes also go to history and the stop reason to last-exit, so `ls` and `watch` can tell what happened after the fact.
   record() { echo "$1" >>"$digest"; echo "$(date '+%F %H:%M') $1" >>"$st/history"; }
   end_loop() { echo "$(now) $1"; echo "$(date '+%F %H:%M') $1" >"$st/last-exit"; }
-  # A job launched by an earlier loop (stopped, then started again) still counts as ours: run after it, not beside it,
-  # and judge it like our own, or its outcome is lost and its idle session keeps its memory.
-  if [[ -f $st/running ]]; then
+  # A HALTED job stops new launches; the other jobs in flight keep running and are still judged.
+  judge() { finish_job "$@" || touch "$st/halt"; }
+  # Jobs launched by an earlier loop (stopped, then started again) still count as ours: they take their slots and are
+  # judged like our own, or their outcome is lost and their idle sessions keep their memory.
+  adopt_legacy_running "$st"
+  local f
+  for f in "$st"/jobs/*; do
+    [[ -f $f ]] || continue
     local prev_kind prev_ref prev_id prev_w prev_prompt prev_label prev_started
-    read -r prev_kind prev_ref prev_id prev_w <"$st/running"
+    read -r prev_kind prev_ref prev_id prev_w <"$f"
     prev_w=${prev_w:-$HOST}
-    prev_started=$(stat -c %Y "$st/running")
+    prev_started=$(stat -c %Y "$f")
     if [[ $prev_kind == prompt ]]; then
       prev_prompt=$(cat "$st/done/$prev_ref.prompt" 2>/dev/null); prev_label="$name ${prev_prompt%%$'\n'*}"
     else
@@ -470,13 +496,13 @@ cmd_loop() {
     # Gone between loops means someone stopped it by hand (claude stop, autopilot clean): nothing left to judge it by.
     if [[ -z $prev_status ]]; then
       echo "$(now) $prev_kind $prev_ref ($prev_id on $prev_w) from the previous loop is gone, not judging it"
-      rm -f "$st/running"
+      rm -f "$f"
     else
       [[ $prev_status == busy ]] && echo "$(now) waiting for $prev_kind $prev_ref ($prev_id on $prev_w) launched by the previous loop"
-      finish_job "$prev_kind" "$prev_ref" "$prev_id" "$prev_label" "$prev_started" "$prev_prompt" "$prev_w" || halted=true
+      judge "$prev_kind" "$prev_ref" "$prev_id" "$prev_label" "$prev_started" "$prev_prompt" "$prev_w" &
     fi
-  fi
-  while ! $halted; do
+  done
+  while [[ ! -f $st/halt ]]; do
     if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then end_loop "deadline reached"; break; fi
     if [[ -f $st/paused ]]; then
       echo "$(now) paused"
@@ -487,9 +513,19 @@ cmd_loop() {
       echo "$(now) resumed"
       continue
     fi
-    local line kind ref rest prompt label id
-    line=$(plan "$name" "$urgent_only" | grep -a -m1 '^next ')
-    [[ -n "$line" ]] || { end_loop "queue empty"; break; }
+    local hold; hold=$(cat "$st/hold-until" 2>/dev/null || echo 0)
+    if (( hold > $(date +%s) )); then sleep 30; continue; fi
+    local in_flight; in_flight=$(jobs_in_flight "$st")
+    if (( in_flight >= parallel )); then sleep 30; continue; fi
+    local line kind ref rest prompt label id skip='^$'
+    # A prompt can't name what it depends on, so prompts run one at a time among themselves; issues go past them.
+    grep -qs '^prompt ' "$st"/jobs/* && skip='^next prompt '
+    line=$(plan "$name" "$urgent_only" | grep -a '^next ' | grep -a -v "$skip" | head -1)
+    if [[ -z "$line" ]]; then
+      (( in_flight == 0 )) && { end_loop "queue empty"; break; }
+      # What is left may be blocked by a job in flight, or come back when one is requeued.
+      sleep 60; continue
+    fi
     read -r _ kind ref rest <<<"$line"
     if [[ $kind == prompt ]]; then
       prompt=$(cat "$st/queue/$ref.prompt"); label="$name ${prompt%%$'\n'*}"
@@ -525,23 +561,27 @@ cmd_loop() {
         break 2
       fi
       if [[ -n "$deadline" ]] && (( $(date +%s) >= deadline )); then end_loop "deadline reached"; break 2; fi
+      [[ -f $st/halt ]] && break 2
       sleep 60
     done
     if [[ $kind == prompt ]]; then mkdir -p "$st/done"; mv "$st/queue/$ref.prompt" "$st/done/"; else echo "$ref" >>"$st/taken"; sed -i "/^${ref}\$/d" "$st/resume" 2>/dev/null; fi
-    echo "$kind $ref $id $w" >"$st/running"
+    echo "$kind $ref $id $w" >"$st/jobs/$id"
     echo "$(now) $kind $ref launched as $id on $w"
     local issue; issue=$(job_issue "$kind" "$ref" "$prompt")
     notify "[start] ${label:0:80} ($id on $w)${issue:+$'\n'<$(cd "$dir" && gh issue view "$issue" --json url -q .url)>}"
-    finish_job "$kind" "$ref" "$id" "$label" "$(date +%s)" "$prompt" "$w" || break
+    judge "$kind" "$ref" "$id" "$label" "$(date +%s)" "$prompt" "$w" &
   done
-  rm -f "$st/running" "$st/loop"
+  # Launching has stopped; the jobs still in flight are judged before the summary goes out.
+  (( $(jobs_in_flight "$st") > 0 )) && echo "$(now) not launching more; waiting for $(jobs_in_flight "$st") job(s) in flight"
+  wait
+  rm -f "$st/loop"
   sleep_idle_workers
   if [[ -s $digest ]]; then notify "[summary] $name"$'\n'"$(cat "$digest")"; fi
   rm -f "$digest"
 }
 
 cmd_start() {
-  local name=${1:?usage: autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--model sonnet]}; shift
+  local name=${1:?usage: autopilot start <repo|all> [--urgent] [--until HH:MM] [--5h-max PCT] [--model sonnet] [--parallel N]}; shift
   if [[ $name == all ]]; then
     local r; for r in $(project_names); do
       if tmux has-session -t "autopilot-$r" 2>/dev/null; then echo "autopilot-$r: already running"; else (cmd_start "$r" "$@"); fi
@@ -549,17 +589,19 @@ cmd_start() {
     return
   fi
   name=${name##*/}
-  local urgent_only=false until="" deadline="" skill=/issue-to-merge five_hour_max=$FIVE_HOUR_MAX model="" dir st
+  local urgent_only=false until="" deadline="" skill=/issue-to-merge five_hour_max=$FIVE_HOUR_MAX model="" parallel=$PARALLEL dir st
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --urgent) urgent_only=true; shift ;;
       --until) until=$2; shift 2 ;;
       --5h-max) five_hour_max=$2; shift 2 ;;
       --model) model=$2; shift 2 ;;
+      --parallel) parallel=$2; shift 2 ;;
       *) die "unknown option: $1" ;;
     esac
   done
   [[ $five_hour_max =~ ^[0-9]+$ ]] && (( five_hour_max >= 1 && five_hour_max <= 100 )) || die "--5h-max takes 1-100, got $five_hour_max"
+  [[ $parallel =~ ^[1-9]$ ]] || die "--parallel takes 1-9, got $parallel"
   dir=$(repo_dir "$name"); st=$(repo_state "$name")
   tmux has-session -t "autopilot-$name" 2>/dev/null && die "already running for $name (autopilot stop $name first)"
   # Background sessions are interactive and refuse untrusted dirs.
@@ -578,9 +620,9 @@ cmd_start() {
     deadline=$(date -d "$until" +%s) || die "bad --until: $until"
     (( deadline > $(date +%s) )) || deadline=$(date -d "tomorrow $until" +%s)
   fi
-  echo "started $(now), until ${until:--}, 5h max ${five_hour_max}%, model ${model:-default}, urgent only $urgent_only, skill $skill" >"$st/loop"
+  echo "started $(now), until ${until:--}, 5h max ${five_hour_max}%, model ${model:-default}, parallel $parallel, urgent only $urgent_only, skill $skill" >"$st/loop"
   tmux new-session -d -s "autopilot-$name" \
-    "$(printf '%q ' "$SELF" _loop "$name" "$urgent_only" "$deadline" "$skill" "$five_hour_max" "$model") >> $(printf %q "$st/log") 2>&1"
+    "$(printf '%q ' "$SELF" _loop "$name" "$urgent_only" "$deadline" "$skill" "$five_hour_max" "$model" "$parallel") >> $(printf %q "$st/log") 2>&1"
   echo "autopilot-$name: $(cat "$st/loop"). Log: $st/log"
 }
 
@@ -649,10 +691,12 @@ cmd_ls() {
     else
       echo "== $name  loop: stopped$([[ -f $st/paused ]] && echo " (paused: start will hold until resume)")  last: $(cat "$st/last-exit" 2>/dev/null || echo -)"
     fi
-    if [[ -f $st/running ]]; then
-      local kind ref id w; read -r kind ref id w <"$st/running"; w=${w:-$HOST}
+    local f kind ref id w
+    for f in "$st/running" "$st"/jobs/*; do
+      [[ -f $f ]] || continue
+      read -r kind ref id w <"$f"; w=${w:-$HOST}
       echo "  running  $kind $ref  $id on $w  $(agents "$w" 2>/dev/null | jq -r --arg id "$id" '.[] | select(.id == $id) | "\(.status)/\(.state)  \(.name)"')"
-    fi
+    done
     plan "$name" | sed 's/^/  /'
   done
 }

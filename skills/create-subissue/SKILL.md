@@ -67,6 +67,16 @@ for child_num in <子1> <子2> ...; do
 done
 ```
 
+### 依存の設定（blocked-by）
+
+「#xxx が先にマージされている必要あり」の子には GitHub の blocked-by を張る。autopilot は2本並行で流し、open な blocker が残る Issue だけを後回しにするので、張らないと依存先の merge 前に着手される。
+
+```bash
+gh api graphql -f query='mutation($i: ID!, $b: ID!) { addBlockedBy(input: {issueId: $i, blockingIssueId: $b}) { issue { number } blockingIssue { number } } }' \
+  -f i="$(gh issue view <依存する子> --repo <REPO> --json id -q .id)" -f b="$(gh issue view <先に merge する子> --repo <REPO> --json id -q .id)" \
+  --jq '.data.addBlockedBy | "#\(.issue.number) blocked by #\(.blockingIssue.number)"'
+```
+
 ### Step 5: 完了報告
 
 作成したIssueの一覧を表示する。
