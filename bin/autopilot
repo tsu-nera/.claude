@@ -138,8 +138,8 @@ agents() { on_worker "$1" _w-agents 2>/dev/null; }
 busy_count() { local j; j=$(agents "$1") || return 1; jq '[.[] | select(.status == "busy")] | length' <<<"$j"; }
 attach_hint() { if [[ $1 == "$HOST" ]]; then echo "claude attach $2"; else echo "ssh $1, claude attach $2"; fi; }
 recently_down() { [[ -n $(find "$STATE/down-$1" -mmin -"$DOWN_MINUTES" 2>/dev/null) ]]; }
-# Succeeds when the worker answers, waking it first if asleep. One the loop woke is marked, so it goes back to sleep
-# once nothing of autopilot's is left there (sleep_idle_workers); one that was already awake is left as it was.
+# Succeeds when the worker answers, waking it first if asleep. Putting it back to sleep is the worker's own job
+# (mouse: mouse-idle-suspend in ~/repo/scripts), so work that isn't autopilot's keeps it up too.
 worker_up() {
   local w=$1 wake
   [[ $w == "$HOST" ]] && return 0
@@ -151,29 +151,13 @@ worker_up() {
     "$wake" >&2
     local t0=$SECONDS
     while (( SECONDS - t0 < WAKE_WAIT )); do
-      if on_worker "$w" _w-mem >/dev/null 2>&1; then touch "$STATE/woke-$w"; echo "$(now) $w is up" >&2; return 0; fi
+      if on_worker "$w" _w-mem >/dev/null 2>&1; then echo "$(now) $w is up" >&2; return 0; fi
       sleep 5
     done
   fi
   echo "$(now) $w unreachable, skipping it for ${DOWN_MINUTES}m" >&2
   touch "$STATE/down-$w"
   return 1
-}
-# A worker the loop woke goes back to sleep when no session is alive there (a blocked one waits for its answer; an entry
-# without status has no process left). Other loops don't keep it up: one that needs it later wakes it again. Holding the
-# launch lock keeps it from going to sleep under a launch another loop is making there.
-sleep_idle_workers() {
-  mkdir -p "$STATE"
-  (
-    flock 8
-    local w j
-    for w in $(worker_names); do
-      [[ -f $STATE/woke-$w ]] || continue
-      j=$(agents "$w") || continue
-      (( $(jq '[.[] | select(.status != null)] | length' <<<"$j") == 0 )) || continue
-      on_worker "$w" _w-suspend && rm -f "$STATE/woke-$w" && echo "$(now) $w: nothing left there, suspended it"
-    done
-  ) 8>"$STATE/launch.lock"
 }
 # Check and launch share one lock, held until the new session shows as busy, so two loops can't both pass the check
 # before either session is counted. Prints "<worker> <session id>". Among workers with room the one with the fewest busy
@@ -287,9 +271,6 @@ cmd_w_clean() {
     claude stop "$id" >/dev/null && echo "stopped $id"
   done
 }
-# Asleep it can only be woken (wake command in workers.conf), so this is only sent once nothing is left there.
-# Scheduled a few seconds out: suspending right away races the ssh session that sent it (it closed 0.3s ahead once).
-cmd_w_suspend() { sudo -n systemd-run --quiet --on-active=5 systemctl suspend; }
 
 # Each worker's statusline writes what its own sessions last saw of the account's 5h and weekly windows, which every
 # worker uses up alike, so the newest of them is the one to go by. A worker that is asleep is skipped, not woken.
@@ -575,7 +556,6 @@ cmd_loop() {
   (( $(jobs_in_flight "$st") > 0 )) && echo "$(now) not launching more; waiting for $(jobs_in_flight "$st") job(s) in flight"
   wait
   rm -f "$st/loop"
-  sleep_idle_workers
   if [[ -s $digest ]]; then notify "[summary] $name"$'\n'"$(cat "$digest")"; fi
   rm -f "$digest"
 }
@@ -730,7 +710,7 @@ for_each_worker() {
   done
 }
 cmd_status() { for_each_worker _w-status; }
-cmd_clean() { for_each_worker _w-clean; sleep_idle_workers; }
+cmd_clean() { for_each_worker _w-clean; }
 
 cmd_res() {
   local mt ma sw
@@ -770,7 +750,6 @@ case "$cmd" in
   _w-status) cmd_w_status ;;
   _w-clean) cmd_w_clean ;;
   _w-res) cmd_res ;;
-  _w-suspend) cmd_w_suspend ;;
   _loop) cmd_loop "$@" ;;
   _last-said) last_said "$1" ;;
   *) sed -n '2,19p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1 ;;

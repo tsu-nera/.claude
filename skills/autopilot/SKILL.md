@@ -5,7 +5,7 @@ description: 対話なしで完結する仕事を iiyama（このPC）で回す�
 
 # autopilot
 
-振り分けは2段。1段目はここ（iiyama）で、iiyama でやるか worker に任せるかを決める。2段目は vaio の loop が、ジョブ1本ごとに空きのある worker のうち busy の少ない方（同数なら `workers.conf` の順 = mouse → vaio）を選ぶ。1つの loop は既定で2本まで並行して走らせるので、mouse と vaio に1本ずつ載る。寝ている mouse は vaio が WoL で起こし、loop が起こしたものは何も残らなくなったら寝かせ直す。2段目はスクリプトで、ここでは判断しない。
+振り分けは2段。1段目はここ（iiyama）で、iiyama でやるか worker に任せるかを決める。2段目は vaio の loop が、ジョブ1本ごとに空きのある worker のうち busy の少ない方（同数なら `workers.conf` の順 = mouse → vaio）を選ぶ。1つの loop は既定で2本まで並行して走らせるので、mouse と vaio に1本ずつ載る。寝ている mouse は vaio が WoL で起こす。寝かせるのは mouse 自身（仕事が無い状態が30分続いたら suspend）。2段目はスクリプトで、ここでは判断しない。
 `autopilot` CLI（`~/.claude/bin/autopilot`）は vaio 上で動き、iiyama から叩くと ssh で vaio に転送される。
 起動はユーザーが流したい時だけ（常駐 cron は持たない。週の rate limit を毎晩使わないため）。
 
@@ -50,7 +50,7 @@ autopilot status / clean / res
 - 並行時の順序は GitHub の blocked-by だけが守る。open な blocker が残る Issue は `plan` が skip する（`ls` に `skip issue N blocked by` と出る）。連番で依存する子 Issue は blocked-by を張って積む（split-issue / create-subissue の手順にある）。張らずに積んだシリーズは `--parallel 1` で流す。`add` で積んだ prompt は依存を表せないので、prompt 同士は1本ずつ（Issue は追い越してよい）
   重いのは agent でなく tsc/vitest で、repo 側の lock（xchain-arb は `prepush-checks.lock`）が直列化する前提
 - プロジェクトは `projects.conf` に定義する。追加したら各 worker に clone・`~/.claude.json` で trust・`autopilot`/`urgent` ラベル作成が要る（`autopilot projects` で点検。準備の無い worker は飛ばされ、vaio が未 trust なら `start` が止まる）
-- worker は `workers.conf` に定義する。起こし方の `wake-mouse` は vaio の `~/.local/bin`（MAC・IP 入りなので public の `~/.claude` に入れない）。loop が起こした worker は、loop が終わった時に生きたセッションが残っていなければ寝かせ直す（5秒後の suspend 予約。他の loop は止めない理由にならない＝要る時にまた起こす。blocked が残る間は起きたまま。`clean` の後にも見直す）。起きていたものは寝かせない。寝起きをまたいでも bg セッションは続きから動く（2026-10-21 確認）
+- worker は `workers.conf` に定義する。起こし方の `wake-mouse` は vaio の `~/.local/bin`（MAC・IP 入りなので public の `~/.claude` に入れない）。autopilot は起こすだけで寝かせない。mouse は `mouse-idle-suspend`（`~/repo/scripts`、毎分の system timer）が、busy/waiting の Claude セッション・block 型の sleep inhibitor・デスクトップ操作・負荷のどれも無い状態が30分続いたら寝かせる。寝起きをまたいでも bg セッションは続きから動く（2026-10-21 確認）
 - 寝ている worker は起こせても `WAKE_WAIT`（90秒）以内に ssh が通らなければ10分間飛ばされ、その間は vaio だけで回る
 - busy の数え方・待ち方・判定はどれも `claude agents --json` を読む。形は公開された約束ではなく版で違う（id・status の有無）うえ、worker ごとに勝手に自動更新される。`start` と毎回の起動前に `_w-check` で点検し、知らない形なら HALTED で止まる（その時は `cmd_w_check` と読む側を新しい形に合わせる）
 - ジョブの実行中に worker へ15分届かない（電源・Wi-Fi・スリープ）と HALTED で #hitl に上がる。新規起動は止まるが、他の worker のジョブは最後まで待って判定する。届かないジョブは向こうで生きている可能性があるので `jobs/` に残し、起こして `start` すると前のジョブを待って判定してから続ける
