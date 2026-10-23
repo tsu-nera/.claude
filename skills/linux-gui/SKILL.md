@@ -1,6 +1,6 @@
 ---
 name: linux-gui
-description: このPC（CachyOS / niri Wayland）のデスクトップアプリを agent が操作・確認する手順。ネイティブアプリのボタンを押す、設定画面を変える、ウィンドウの中身を見る、キー入力やクリックを送る、画面を撮る、など GUI に触れる必要が出たら、スクショや座標クリックを試す前に必ず参照すること。ブラウザ内のページ操作だけなら chrome-devtools-mcp / read-web を使う。
+description: このPC（CachyOS / niri Wayland）のデスクトップアプリを agent が操作・確認する手順。ネイティブアプリのボタンを押す、設定画面を変える、ウィンドウの中身を見る、キー入力やクリックを送る、画面を撮る、など GUI に触れる必要が出たら、スクショや座標クリックを試す前に必ず参照すること。ブラウザ内のページ操作だけなら read-web を使う。
 ---
 
 # Linux GUI 操作（niri / Wayland）
@@ -10,7 +10,7 @@ description: このPC（CachyOS / niri Wayland）のデスクトップアプリ�
 上で済むなら下に降りない。下ほどトークンを食い、壊れやすい。
 
 1. **GUI を避ける**: 設定ファイル・CLI・D-Bus・`gsettings`・`noctalia msg` で済まないか先に考える
-2. **ブラウザ / Electron は CDP**: chrome-gui MCP の `take_snapshot`。Electron は `--remote-debugging-port=9222` で起動すれば同じ
+2. **ブラウザ / Electron は CDP**: `--remote-debugging-port=9222` 付きで起動し `agent-browser connect 9222` → `snapshot -i`。`close` は切断のみで接続先は終了しない
 3. **ウィンドウ把握は niri IPC**: `niri msg -j windows`（id・pid・app_id・title）、`niri msg action focus-window --id N`
 4. **ネイティブアプリは AT-SPI**: `scripts/a11y.py`（`-h` で使い方）。`tree` → `find` → `do PATH` で名前ベースに押す。対象は既定でフォーカス中ウィンドウの pid
 5. **最後の手段**: スクショ + `dotool` でキー/マウス

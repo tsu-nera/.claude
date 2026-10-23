@@ -8,48 +8,25 @@ allowed-tools: Bash
 # Chrome DevTools MCP (CachyOS)
 
 CachyOS にインストールした Chrome (`/usr/bin/google-chrome-stable`) を使い、ブラウザの操作・検査を行う。
-2つのモードが登録されており、用途に応じて使い分ける。
 
-ページの中身を読むだけなら `read-web` スキルを先に使う。この MCP は見た目の確認、
-コンソール・ネットワークのデバッグ、bot 検出で他の手段が空になるページ用。
+ページの中身を読む・操作するだけなら `read-web`（agent-browser CLI）を先に使う。この MCP は
+コンソール・ネットワーク・performance trace など DevTools 固有の機能が要るとき用。
 
-## 2つのモード
+## 登録は使うプロジェクトの local scope だけ
 
-| サーバー名 | モード | 用途 |
-|---|---|---|
-| `chrome-devtools` | ヘッドレス | 静的ページの検証、スクリーンショット取得 |
-| `chrome-gui` | GUI 表示 (Wayland) | bot検出があるサイト、ユーザーが操作しながらデバッグ |
-
-- ヘッドレス: ウィンドウなし。軽量だが、bot検出するサイト（nitter.net 等）では空ページになる
-- GUI: Wayland セッション（`DISPLAY=:1` / `WAYLAND_DISPLAY=wayland-1`）にウィンドウが表示される。bot検出を回避でき、JSレンダリングも安定する
-- **迷ったらGUI（chrome-gui）を使う** — ヘッドレスで空ページになるケースが多い
-
-## ~/.claude.json 設定
-
-`claude mcp add -s user` で登録するのが確実（このリポジトリの移行時はこれで再登録した）:
+**user scope（global）に登録しない。** MCP は全セッションで常駐し、npx 経由の node が
+1サーバあたり約3プロセス・数百MB 増える（2026-10-23、4サーバ×11セッションで swap 6.6G を占有していた）。
+スキルから呼んでも未登録のセッションには MCP ツールが存在しない。
 
 ```bash
 NPX=/home/tsu-nera/.asdf/shims/npx
-claude mcp add chrome-devtools -s user -- $NPX -y chrome-devtools-mcp@latest --headless --isolated
-claude mcp add chrome-gui      -s user -- $NPX -y chrome-devtools-mcp@latest --isolated
+cd <プロジェクト>
+claude mcp add chrome-gui      -s local -- $NPX -y chrome-devtools-mcp@latest --isolated             # GUI 表示
+claude mcp add chrome-devtools -s local -- $NPX -y chrome-devtools-mcp@latest --headless --isolated  # ヘッドレス
 ```
 
-結果として `~/.claude.json` の `mcpServers` には以下が入る:
-
-```json
-{
-  "chrome-devtools": {
-    "type": "stdio",
-    "command": "/home/tsu-nera/.asdf/shims/npx",
-    "args": ["-y", "chrome-devtools-mcp@latest", "--headless", "--isolated"]
-  },
-  "chrome-gui": {
-    "type": "stdio",
-    "command": "/home/tsu-nera/.asdf/shims/npx",
-    "args": ["-y", "chrome-devtools-mcp@latest", "--isolated"]
-  }
-}
-```
+- ヘッドレスは bot 検出サイトで空ページになりやすい。迷ったら GUI
+- 登録済みプロジェクトは `jq '.projects|map_values(.mcpServers|keys?)' ~/.claude.json` で一覧。local scope はパス単位なので git worktree には効かない
 
 ### 設定の重要ポイント
 
@@ -89,8 +66,7 @@ mcp__chrome-gui__navigate_page(type="url", url="http://localhost:8080/page.html"
 
 ### Step 1: MCP ツールが使えるか確認
 
-ToolSearch で `chrome-gui navigate` または `chrome-devtools take_screenshot` を検索。
-見つかれば OK、見つからなければ Step 2 へ。
+ToolSearch で `chrome-gui navigate` を検索。見つからなければ、まずこのプロジェクトに登録されているか `claude mcp list` で確認（未登録なら上の `claude mcp add -s local`）。登録済みで失敗するなら Step 2 へ。
 
 ### Step 2: トラブルシューティング
 
@@ -113,13 +89,7 @@ node --version
 /home/tsu-nera/.asdf/shims/npx -y chrome-devtools-mcp@latest --help 2>&1 | head -5
 ```
 
-4. MCP サーバが登録されているか確認:
-```bash
-python3 -c "import json;print(list(json.load(open('$HOME/.claude.json')).get('mcpServers',{}).keys()))"
-```
-無ければ上記「~/.claude.json 設定」の `claude mcp add` を実行。
-
-5. 上記が成功するなら Claude Code を再起動 (`/exit` → `claude`)
+4. 上記が成功するなら Claude Code を再起動 (`/exit` → `claude`)
 
 ### "Failed to connect" の頻出原因: npx cache の bin に実行権限が無い
 
