@@ -1,6 +1,6 @@
 ---
 name: create-issue
-description: 会話の内容から GitHub Issue を作成する。「issue立てて」「issueにして」「とりあえずissue立てておいて」で起動。ready（実装者に渡す粒度）と draft（あとで詰める）の2モード。
+description: 会話の内容から、やることが明確な GitHub Issue（変更対象と Acceptance Criteria つき）を作成する。「issue立てて」「issueにして」「起票して」で起動。
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Glob
 ---
@@ -9,60 +9,25 @@ allowed-tools: Bash, Read, Grep, Glob
 
 **Issue 作成の唯一の入口。** 生 `gh issue create` は hook で deny される。
 
-## Step 0: モード判定（最初にこれだけ決める）
+Issue は「やること」を管理する場所。気づき・感想・「あとで考える」は Issue にしない。
 
-ユーザーの語で決め打ちする。意味を推測しない。
+## Step 0: 起票してよいか
 
-- 「issue立てて」「issueにして」「起票して」 → **ready**
-- 「とりあえず」「あとで」「忘れないうちに」「メモ」を含む → **draft**
-- **迷ったら draft**（draft を後で ready に昇格させるのは安い。逆は無人実行で壊れる）
+変更対象と Acceptance Criteria を書き切れるものだけ起票する。書き切れないなら起票しない:
 
-`--mode` が明示指定されていればそれに従う。
+- 調べれば書けるなら、その場で調べて書き切る
+- 判断の前提・知見なら memory、経緯なら journal に残す
+- やる価値が見合わないなら、却下と理由をユーザーに返す
 
----
+「とりあえず」「メモ」と言われても同じ。書き切れない時は Issue にせず、どこに残したかを報告する。
 
-## draft モード
+## Step 1: 本文を書いて作成
 
-目的は「**後で自分が再現できること**」だけ。実装者に渡す前提が無いので、Acceptance Criteria も実装方針も書かない。
-探索（Grep/Read）もしない。会話に出ていない情報を調べに行かない。
-
-body:
-
-```markdown
-## 現象 / 気になったこと
-
-（1-3行）
-
-## 出典
-
-- `src/xxx/foo.ts:123`（会話で見た具体的な箇所。無ければ issue 番号 / ログ / コマンド）
-
-## なぜ気になったか
-
-（1-2行。後で読む自分が「で、何が問題なんだっけ」にならないように）
-```
-
-作成:
-
-```bash
-~/.claude/bin/create-issue.sh --mode draft --repo <REPO> --title "<タイトル>" --body-file <path> --label inbox
-```
-
-`inbox`（未トリアージ・週次棚卸し）が必ず付く。type ラベルは付けない（まだ分類しない）。
-
----
-
-## ready モード
-
-**`references/ready.md` を読んでから書く。** ここで初めて doctrine（下流の `issue-to-pr` / codex が自走できる
-粒度・format・stop condition 回避）と `autopilot` 判定が必要になる。
-
----
+**`references/ready.md` を読んでから書く。** 下流の `issue-to-pr` / codex が自走できる粒度・format・`autopilot` 判定はそこにある。
 
 ## 引数
 
 `$ARGUMENTS` から抽出:
 - `--repo=owner/repo`（省略時は `gh repo view --json nameWithOwner -q .nameWithOwner`）
-- `--mode=ready|draft`（省略時は Step 0 で判定）
 - `--label=<label>`（複数可）
 - それ以外のテキスト: Issue 内容の補足

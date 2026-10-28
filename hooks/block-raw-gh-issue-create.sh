@@ -26,10 +26,10 @@ if grep -qE '(^|[;&|(][[:space:]]*|^[[:space:]]*)gh[[:space:]]+issue[[:space:]]+
   cat >&2 <<'MSG'
 Raw `gh issue create` is blocked. Issue creation must go through the create-issue skill.
 
-1. Decide the mode from the user's own words (skill Step 0): "issue立てて" -> ready / "とりあえず" -> draft. When unsure, draft.
-2. ready mode: read ~/.claude/skills/create-issue/references/ready.md first.
+1. File only what states a change target and Acceptance Criteria. Notes and "maybe later" go to memory/journal, not issues.
+2. Read ~/.claude/skills/create-issue/references/ready.md first.
 3. Create with:
-   ~/.claude/bin/create-issue.sh --mode <ready|draft> --repo <owner/repo> --title "<title>" --body-file <path> --label <label>
+   ~/.claude/bin/create-issue.sh --repo <owner/repo> --title "<title>" --body-file <path> --label <label>
 MSG
   exit 2
 fi

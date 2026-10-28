@@ -1,6 +1,6 @@
-# ready モードの doctrine
+# Issue 本文の doctrine
 
-`/create-issue` の ready モードで Issue 本文を書くときに従う。draft モードでは読まない。
+`/create-issue` で Issue 本文を書くときに従う。
 
 ## 設計の丁寧さ: 最も context が乏しい実装者に合わせる
 
@@ -122,7 +122,7 @@ Acceptance Criteria の検証可能性（codex stop condition との整合）:
 ### Step 5: Issue作成
 
 ```bash
-~/.claude/bin/create-issue.sh --mode ready --repo <REPO> --title "<タイトル>" --body-file <path> --label <type> [--label autopilot] [--label urgent]
+~/.claude/bin/create-issue.sh --repo <REPO> --title "<タイトル>" --body-file <path> --label <type> [--label autopilot] [--label urgent]
 ```
 
 生 `gh issue create` は hook で deny される。`--body-file` 必須（本文をコマンドラインに埋めない）。
