@@ -313,6 +313,8 @@ plan() {
         | map(select(.u or ($urgent_only | not))) | sort_by((if .u then 0 else 1 end), .n)
         | .[] | "\(.n) \(if .u then "urgent" else "-" end) \(.t)"' \
     | while read -r n u title; do
+        # `add` clears taken to mean retry, so a job still running from before must block on its own record.
+        if grep -qs "^issue $n " "$st"/jobs/*; then echo "skip issue $n job still running"; continue; fi
         if grep -qx "$n" "$st/taken" 2>/dev/null; then echo "skip issue $n already launched (autopilot add to retry)"; continue; fi
         # blocked_by counts only open blockers. With jobs in parallel, this is what keeps 4393 from starting before 4392 merges.
         local blockers; blockers=$(cd "$dir" && gh api "repos/{owner}/{repo}/issues/$n" -q '.issue_dependencies_summary.blocked_by // 0')
