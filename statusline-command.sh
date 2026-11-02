@@ -30,6 +30,18 @@ if [ -n "$five_h" ]; then
   echo "$input" | jq -c '{five_hour: .rate_limits.five_hour, seven_day: .rate_limits.seven_day, updated: (now | floor)}' \
     > "$HOME/.cache/claude-rate-limits.json.tmp" && mv "$HOME/.cache/claude-rate-limits.json.tmp" "$HOME/.cache/claude-rate-limits.json"
 fi
+
+# Weekly usage also goes to Home Assistant for the lifelog (saru9000 home/packages/claude_usage.yaml).
+# The webhook URL is kept out of git (anyone holding it can post). Sent only on change, in the background.
+hook_file=$HOME/.config/claude-usage/ha-webhook
+if [ -n "$week" ] && [ -r "$hook_file" ]; then
+  payload=$(echo "$input" | jq -c '{used_percentage: .rate_limits.seven_day.used_percentage, resets_at: .rate_limits.seven_day.resets_at}')
+  sent=$HOME/.cache/claude-usage-sent.json
+  if [ "$payload" != "$(cat "$sent" 2>/dev/null)" ]; then
+    (curl -fsS -m 5 -H 'Content-Type: application/json' -d "$payload" "$(cat "$hook_file")" \
+      && printf '%s' "$payload" > "$sent") >/dev/null 2>&1 &
+  fi
+fi
 limits=""
 if [ -n "$five_h" ]; then
   five_h_str="5h:$(printf '%.0f' "$five_h")%"
