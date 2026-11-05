@@ -18,9 +18,10 @@ description: vaio に常駐する routine runner（`~/repo/scripts/routine`）�
 
 ## 確かめる
 
-- 作ったら `ssh vaio routine test <name>`（予定と dedup を無視して1回走らせ、送らずに表示）
-- `ssh vaio routine ls` で予定・最終実行・エラー・直近7日の prompt 回数と token
-- `ssh vaio routine log [name] [N]` で実行ごとの結果（idle / sent / unchanged / check-error / failed と所要秒）、`routine show <name>` で最後に送った全文
+- 作ったら `ssh vaio "~/.local/bin/routine test <name>"`（予定と dedup を無視して1回走らせ、送らずに表示）
+- 非対話の ssh では `~/.local/bin` が PATH に無いのでフルパスで呼ぶ
+- `ssh vaio "~/.local/bin/routine ls"` で予定・最終実行・エラー・直近7日の prompt 回数と token
+- `ssh vaio "~/.local/bin/routine log [name] [N]"` で実行ごとの結果（idle / sent / unchanged / check-error / failed と所要秒）、`routine show <name>` で最後に送った全文
 - timer 自体の失敗は `ssh vaio journalctl --user -u routine.service`
 
 ## 止める・直す
