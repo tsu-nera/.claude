@@ -16,6 +16,7 @@ description: 持ち物の台帳（dailybuild-private の items.csv）に物を�
 ## キー
 
 - Amazon: `amazon:<order_id>:<ASIN>`。開示データより新しい注文は先に `uv run --project ~/repo/dailybuild scripts/purchases.py fetch` で追いつかせ、`data/purchases/gmail.csv` の `asin` 列からキーを作る。`manual:N` で入れると開示データ取り込み後に二重になる。`amazon.csv` に無い行は join 先が無いので `name` を埋める
+- メルカリ: `mercari:<item_id>`
 - 店頭購入など: `manual:N`（既存の最大番号の次）。`note` に店名・価格・JAN
 
 ## 店頭購入の JAN
