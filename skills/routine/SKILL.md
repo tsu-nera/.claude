@@ -10,7 +10,7 @@ description: vaio に常駐する routine runner（`~/repo/scripts/routine`）�
 ## 足す
 
 - タスク 1 本 = `.md` 1 枚。その仕事が属する repo に置く（xchain-arb なら `scripts/ops/routines/`）。新しい置き場を作ったら vaio の `~/.config/routine/dirs` に1行足す（git 外）
-- push しただけでは動かない。vaio の clone を `ssh vaio 'cd <repo> && git pull --ff-only'` で更新して初めて拾われる
+- runner が毎回 `git pull --ff-only` するので push だけで次の tick（5分以内）に反映される。新しい置き場を `dirs` に足した時だけ vaio に clone があるか確かめる。vaio の clone が汚れていて pull に失敗すると `[routine:pull]` が DM に来て、古い checkout のまま回る
 - 変化を見るだけのタスクは check script だけで書き、本文（prompt）を空にする。Claude が起動せず token は 0
 - prompt は1回で約3.3万 token の基礎量がかかる（CLAUDE.md・memory の読み込み）。check で「変化あり」の時だけ走らせ、軽いものは `model: haiku`、間隔は必要以上に短くしない
 - 無人実行なので、署名・送信・deploy をするタスクは作らない。prompt に `Bash` を `tools:` で渡さない。売買などはコマンドを通知に載せて人が打つ
