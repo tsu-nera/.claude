@@ -15,6 +15,7 @@ description: vaio に常駐する routine runner（`~/repo/scripts/routine`）�
 - prompt は1回で約3.3万 token の基礎量がかかる（CLAUDE.md・memory の読み込み）。check で「変化あり」の時だけ走らせ、軽いものは `model: haiku`、間隔は必要以上に短くしない
 - 無人実行なので、署名・送信・deploy をするタスクは作らない。prompt に `Bash` を `tools:` で渡さない。売買などはコマンドを通知に載せて人が打つ
 - 期限があるものは `until:` を付ける
+- 本人に言うかどうかを文脈で判断させたいもの（予定・タスク・メールの見回り）は、個別に prompt を書かず `output: session` で常駐セッションに材料を渡す。判断の基準は `~/discord-ops/CLAUDE.md` の proactive 節。設計は gtd の `docs/personal-agent.md`
 
 ## 確かめる
 

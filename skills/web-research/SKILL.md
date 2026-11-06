@@ -1,6 +1,6 @@
 ---
 name: web-research
-description: Web 上の外部情報を調べて、出典付きで日本語にまとめる。「Webで調べて」「調査して」「最新情報を調べて」「〜の評判・比較・動向を調べて」など、手元のコードやファイルでは答えが出ず検索が要る依頼で使う。Qiita/Zenn の日本語技術記事も拾える。コード・ログ・リポジトリ内の調査には使わない。
+description: Web 上の外部情報を調べて、出典付きで日本語にまとめる。「Webで調べて」「調査して」「最新情報を調べて」「〜の評判・比較・動向を調べて」など、手元のコードやファイルでは答えが出ず検索が要る依頼で使う。Qiita/Zenn の日本語技術記事、note の実践記録・体験談も拾い、note の記事 URL の本文も取れる。コード・ログ・リポジトリ内の調査には使わない。
 user-invocable: true
 allowed-tools: Agent, WebSearch, WebFetch, Read, Bash(python3 ~/.claude/skills/web-research/scripts/*)
 ---
@@ -19,6 +19,7 @@ Web 検索で足りない時に併用する。adapter を使う前に対応す�
 
 - **実装手順・エラー解決・日本語の詰まりどころ**: Qiita → `references/qiita.md`
 - **個人開発・検証記事・定番記事（いいね順が効く）**: Zenn → `references/zenn.md`
+- **生活・商売・投資の実践記録、体験談（技術以外も）**: note → `references/note.md`。note の URL の本文取得もこれ
 - **障害・サービス状況・速報**: `x-research` スキルに委譲
 
 ## 報告で守ること

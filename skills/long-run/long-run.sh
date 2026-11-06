@@ -74,6 +74,8 @@ cmd_start() {
   target=$(cd "$dir" && gh api "repos/{owner}/{repo}/issues/$to" --jq '"\(if .pull_request then "PR" else "Issue" end) #\(.number) [\(.state)] \(.title)"' 2>&1) \
     || die "--to $to: not found in $(cd "$dir" && gh repo view --json nameWithOwner -q .nameWithOwner): $target"
   local unit="long-run-$project-$to-$(date +%m%d%H%M)"
+  # Same-minute starts share the name; overwriting meta would hand the running job another job's summary.
+  [[ -e $STATE/$unit ]] && die "$unit already exists; start again next minute"
   mkdir -p "$STATE/$unit"
   printf 'project=%q\nto=%q\nfor=%q\nevery=%q\nsummary=%q\ncmd=%q\ndry=%q\nstarted=%q\n' \
     "$project" "$to" "$for" "$every" "$summary" "$*" "$dry" "$(date '+%F %T')" > "$STATE/$unit/meta"
