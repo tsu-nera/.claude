@@ -21,6 +21,10 @@ description: 自分の Gmail を読む・探す・振り分ける・配信停止
 
 一覧を見るなら `search.py '<Gmail 検索式>'` を使う。MCP の `search_threads` は1回で数千 tokens 返す。本文を正規表現で絞るときは `--body '<regex>'` を付ける。
 
+## ゴミ箱へ移す
+
+Gmail MCP の `trash_thread` はスコープ不足で失敗する。`trash.py <thread ID>...`（search.py の2列目）を使う。
+
 ## フィルタ
 
 正本は `scripts/gmail/gmailctl/config.jsonnet`。編集したら gmailctl で diff を確かめてから apply する（`--config scripts/gmail/gmailctl`）。Gmail の画面や API で直接作ったフィルタは、次の apply で消える。
