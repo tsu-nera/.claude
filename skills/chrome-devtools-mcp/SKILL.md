@@ -21,8 +21,8 @@ CachyOS にインストールした Chrome (`/usr/bin/google-chrome-stable`) を
 ```bash
 NPX=/home/tsu-nera/.asdf/shims/npx
 cd <プロジェクト>
-claude mcp add chrome-gui      -s local -- $NPX -y chrome-devtools-mcp@latest --isolated             # GUI 表示
-claude mcp add chrome-devtools -s local -- $NPX -y chrome-devtools-mcp@latest --headless --isolated  # ヘッドレス
+claude mcp add chrome-gui      -s local -- $NPX -y chrome-devtools-mcp@latest --user-data-dir /home/tsu-nera/.cache/chrome-agent  # GUI 表示・ログインを残す
+claude mcp add chrome-devtools -s local -- $NPX -y chrome-devtools-mcp@latest --headless --isolated  # ヘッドレス・使い捨て
 ```
 
 - ヘッドレスは bot 検出サイトで空ページになりやすい。迷ったら GUI
@@ -31,7 +31,8 @@ claude mcp add chrome-devtools -s local -- $NPX -y chrome-devtools-mcp@latest --
 ### 設定の重要ポイント
 
 - **node は asdf の v22.16.0**（PATH 上の `~/.asdf/shims/npx`）。chrome-devtools-mcp は v22.16 で動作確認済み。旧 WSL2 環境の `bash -c "source ~/.nvm/nvm.sh && ..."` ラッパーは **不要**（nvm は無い）
-- **`--isolated`**: 2つのサーバーがプロファイルを共有しないよう、一時ディレクトリを使用。これがないとプロファイルロックで片方が起動失敗する
+- **プロファイル**: 1つのプロファイルは同時に1ブラウザしか開けない（ロックで片方が起動失敗）。ログインを残すのは chrome-gui の `~/.cache/chrome-agent` だけにし、ヘッドレスは `--isolated`。既定の `~/.cache/chrome-devtools-mcp/chrome-profile` は mygov が使っている
+- **`~/.cache/chrome-agent` の決まり**: ログインは本人が手で行う（パスワードを agent に渡さない）。Google アカウントで同期ログインしない（全パスワードが自動入力可能になる）。取引所・銀行にはログインしない。別セッションが同じプロファイルで開いていると起動に失敗するので、その時は先に閉じる
 
 ## 使い方
 
