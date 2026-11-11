@@ -11,7 +11,8 @@ description: 持ち物の台帳（正本は vaio の Homebox、写しは dailybu
 cd ~/repo/dailybuild
 uv run scripts/homebox.py add <key> --category <カテゴリ> [--subcategory ..] [--name ..] [--acquired-on YYYY-MM-DD] [--note ..]
 uv run scripts/homebox.py add manual --name '<品名>' --category <カテゴリ> --acquired-on <日付> --note '<店名・価格・JAN>'
-uv run scripts/homebox.py dispose <key> --date YYYY-MM-DD --how '<売却・粗大ごみ等>'
+uv run scripts/homebox.py dispose <key> --date YYYY-MM-DD --how '<粗大ごみ等>'
+uv run scripts/homebox.py dispose <key> --mercari <item_id>   # メルカリで売った物。日付・売値は mercari.csv から（無ければ先に purchases.py fetch-mercari）
 uv run scripts/homebox.py move <key> <場所>   # 末端の名前（靴箱）か経路（玄関・キッチン / 靴箱）
 uv run scripts/homebox.py find [語] [--location ..] [--tag ..] [--all]   # Homebox を直接引く
 ```
