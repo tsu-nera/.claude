@@ -12,10 +12,11 @@ cd ~/repo/dailybuild
 uv run scripts/homebox.py add <key> --category <カテゴリ> [--subcategory ..] [--name ..] [--acquired-on YYYY-MM-DD] [--note ..]
 uv run scripts/homebox.py add manual --name '<品名>' --category <カテゴリ> --acquired-on <日付> --note '<店名・価格・JAN>'
 uv run scripts/homebox.py dispose <key> --date YYYY-MM-DD --how '<売却・粗大ごみ等>'
-uv run scripts/homebox.py export   # 引く前に最新化
+uv run scripts/homebox.py move <key> <場所>   # 末端の名前（靴箱）か経路（玄関・キッチン / 靴箱）
+uv run scripts/homebox.py find [語] [--location ..] [--tag ..] [--all]   # Homebox を直接引く
 ```
 
-add / dispose は最後に items.csv まで書き出す。書き出した items.csv は dailybuild-private に commit して push する（日次の自動 commit と競るので、弾かれたら `git pull --rebase`）。品名・購入日・価格・購入先は key から `data/purchases/` を引いて埋まる。場所・写真は本人が UI で付ける。
+add / dispose / move は最後に items.csv まで書き出す。場所の名前が曖昧・不在なら止まるので、出てきた候補から選ぶ（場所を勝手に作らない。増やすのは本人）。書き出した items.csv は dailybuild-private に commit して push する（日次の自動 commit と競るので、弾かれたら `git pull --rebase`）。品名・購入日・価格・購入先は key から `data/purchases/` を引いて埋まる。写真は本人が UI で付ける。
 
 ## 何を記録するか
 
