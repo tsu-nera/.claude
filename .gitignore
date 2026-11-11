@@ -18,7 +18,6 @@ daemon/
 downloads/
 jobs/
 gh-pr-status-cache.json
-skills/todoist-cli/
 feedback/
 .last-update-result.json
 
