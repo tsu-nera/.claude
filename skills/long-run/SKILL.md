@@ -38,6 +38,8 @@ long-run.sh ls / log <unit> / stop <unit>
 
 - project は `~/.claude/skills/autopilot/projects.conf` の名前。コマンドは vaio のその checkout を cwd に、login shell で走る（素の `ssh vaio 'cmd'` は PATH に asdf が入らず、Node が古い `/usr/local/bin/node` v20 になる）
 - `scripts/scratch/` などの gitignore 下のファイルは git では届かない。`--sync` で iiyama の checkout から同じ相対パスへコピーする。commit 済みのファイルは vaio の checkout が古いと届いていないので、必要なら先に vaio で pull する
+- `-- bash -c "a && b > log"` のような複合コマンドは ssh 転送で引用が崩れ、即死して空の最終コメント + needs-answer が付く。リダイレクト・`&&` を含むなら scratch にラッパーを書いて `--sync` し、`-- scripts/scratch/run.sh <arg>` で渡す
+- 同じ分に2本 start すると unit 名が衝突する。2本目は1分ずらす
 - このスクリプト自体は `~/.claude` を push しないと vaio に届かない（転送時に vaio で `git pull --ff-only` する）
 - 実弾（署名して送る操作・deploy・本番サーバの変更）は無人ジョブに入れない。repo の規約が優先
 - 試すときは `--dry` を付ける（コメントを `~/.local/state/long-run/<unit>/comments.md` に書き出し、ラベルも付けない）。環境変数は ssh 転送で落ちるので使えない。テストでも `--to` には自分の Issue を使う
