@@ -17,7 +17,7 @@ uv run scripts/homebox.py move <key> <場所>   # 末端の名前（靴箱）か
 uv run scripts/homebox.py find [語] [--location ..] [--tag ..] [--all]   # Homebox を直接引く
 ```
 
-add / dispose / move は最後に items.csv まで書き出す。場所の名前が曖昧・不在なら止まるので、出てきた候補から選ぶ（場所を勝手に作らない。増やすのは本人）。書き出した items.csv は dailybuild-private に commit して push する（日次の自動 commit と競るので、弾かれたら `git pull --rebase`）。品名・購入日・価格・購入先と商品ページのリンク（Amazon・楽天・メルカリ）は key から `data/purchases/` を引いて埋まる。ユニクロ・店頭の商品ページは分かれば `--url` で渡す。写真は本人が UI で付ける。
+add / dispose / move は最後に items.csv まで書き出す。場所の名前が曖昧・不在なら止まるので、出てきた候補から選ぶ（場所を勝手に作らない。増やすのは本人）。書き出した items.csv は dailybuild-private に commit して push する（日次の自動 commit と競るので、弾かれたら `git pull --rebase`）。品名・購入日・価格・購入先と商品ページのリンク（Amazon・楽天・メルカリ。開けるときだけ）は key から `data/purchases/` を引いて埋まる。ユニクロ・店頭の商品ページは分かれば `--url` で渡す。写真は本人が UI で付ける。
 
 ## 何を記録するか
 
