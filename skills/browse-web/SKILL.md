@@ -1,14 +1,30 @@
 ---
-name: read-web
-description: Web ページの中身を読む手順。WebFetch が空・骨組みだけ・「JS で描画されていて取れない」を返したとき、SPA や動画/SNS/EC ページの説明文・本文・数値を取りたいとき、ブラウザ（Playwright / Chrome DevTools MCP）を立ち上げる前に必ず参照すること。生 HTML の埋め込み JSON、Jina Reader、agent-browser CLI + eval の順に安い手段から試し、トークンを一桁節約する。
+name: browse-web
+description: Web ページを読む・操作するときの手段の選び方と、安い順の読み方。WebFetch が空・骨組みだけ・「JS で描画されていて取れない」を返したとき、SPA や動画/SNS/EC ページの説明文・本文・数値を取りたいとき、ログイン後の画面を読む・操作する（削除・アップロード・フォーム）とき、ブラウザ（Playwright / Chrome DevTools MCP / Claude in Chrome）を立ち上げる前に必ず参照すること。
 ---
 
-# Web ページを読む
+# Web ページを読む・操作する
+
+## 手段の選び方（上から順に当てはめ、最初に合ったものを使う）
+
+| 優先 | 条件 | 手段 |
+|---|---|---|
+| 1 | 公式 API・export がある | それを使う。ブラウザを開かない |
+| 2 | ログイン不要で、読むだけ | 下の「読む手順」（curl → 埋め込み JSON → Jina → agent-browser） |
+| 3 | 同じ取得を定期的に無人で回す | リポジトリに Playwright のスクリプトを書き、セッションをファイルに保存する |
+| 4 | ログイン後の画面を、本人がそばにいるときに読む・操作する | Claude in Chrome（`mcp__claude-in-chrome__*`） |
+| 5 | ログイン後の画面を、本人不在で一回だけ読む・操作する | chrome-gui（`chrome-devtools-mcp` スキル、`~/.cache/chrome-agent`）。ログインは本人が先に済ませておく |
+| 6 | コンソール・通信・性能を見る（自分のアプリの調査） | chrome-devtools-mcp |
+| 7 | ブラウザの外のアプリ | `linux-gui` スキル |
+
+- 4 と 5 の違いは隔離。Claude in Chrome は本人の普段のプロファイルなので全ログインに手が届き、
+  chrome-gui の「銀行・取引所にログインしない」が効かない。本人不在で 4 を使わない。最後の確定ボタンは本人に確かめてから押す
+- 4 か 5 を2回やったら 3（スクリプト）にできないか考える
+
+## 読む手順
 
 安い手段から順に試し、取れた時点で止める。いきなりブラウザ MCP を使うと、1ページの
 スナップショットだけで数万字を消費する。
-
-## 手順
 
 1. **WebFetch か `curl -sL -A 'Mozilla/5.0' URL` で生 HTML を取る。** 本文が出ればここで終わり
 2. **出ない → 生 HTML の中の埋め込みデータを grep する。** JS 描画のサイトでも、初期データを
@@ -17,13 +33,9 @@ description: Web ページの中身を読む手順。WebFetch が空・骨組み
    WebFetch は要約モデルを通すので見落とす。grep するなら `curl` の出力に対して行う。
    `og:description` は途中で `...` に切られていることが多い。全文は JSON 側から取る
 3. **無い → `curl -s https://r.jina.ai/URL`（Jina Reader）。** 描画済みページを Markdown で返す。
-   URL が外部サービスに渡るので、私的・社内・ログイン後の URL には使わず 4 へ進む
-4. **それでも足りない（折りたたみの中、クリック後に出る、無限スクロール）→ agent-browser**
-5. **ログインが要るページ** は agent-browser の `--auto-connect`（起動中の Chrome の認証を流用）か
-   `--profile Default`。bot 検出で空になるなら `--headed`
-6. **本人がそばにいて、ログイン後の画面で操作する（削除・アップロード・フォーム）** → Claude in Chrome
-   （`mcp__claude-in-chrome__*`）。本人の普段のプロファイルなので、chrome-gui（`~/.cache/chrome-agent`）の
-   「銀行・取引所にログインしない」という隔離は効かない。最後の確定ボタンは本人に確かめてから押す
+   URL が外部サービスに渡るので、私的・社内・ログイン後の URL には使わない
+4. **それでも足りない（折りたたみの中、クリック後に出る、無限スクロール）→ agent-browser。**
+   bot 検出で空になるなら `--headed`
 
 ## Claude in Chrome の落とし穴
 

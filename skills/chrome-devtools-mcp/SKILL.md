@@ -9,7 +9,7 @@ allowed-tools: Bash
 
 CachyOS にインストールした Chrome (`/usr/bin/google-chrome-stable`) を使い、ブラウザの操作・検査を行う。
 
-ページの中身を読む・操作するだけなら `read-web`（agent-browser CLI）を先に使う。この MCP は
+ページの中身を読む・操作するだけなら `browse-web` を先に使う。この MCP は
 コンソール・ネットワーク・performance trace など DevTools 固有の機能が要るとき用。
 
 ## 登録は使うプロジェクトの local scope だけ

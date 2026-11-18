@@ -11,7 +11,7 @@ allowed-tools: Agent, WebSearch, WebFetch, Read, Bash(python3 ~/.claude/skills/w
 
 - 観点ごとのクエリを1ターンで並列に投げ、メインモデル自身が結果を読む。検索を小モデルの subagent に投げて短い要約で受け取ると、日付・数値・主張と出典の対応が落ち、結局検証し直すことになる。
 - Agent を使うのは、多数のページ本文を読み込む深掘りでメインの context を守りたい時だけ。その場合も要約ではなく「主張・根拠の引用・URL・公開日」の形で返させる。
-- ページ本文が取れない時は `read-web`、PDF は `read-pdf` スキルに従う。
+- ページ本文が取れない時は `browse-web`、PDF は `read-pdf` スキルに従う。
 
 ## ソース選択
 
