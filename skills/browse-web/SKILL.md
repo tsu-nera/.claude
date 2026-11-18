@@ -45,7 +45,7 @@ description: Web ページを読む・操作するときの手段の選び方と
   `--restore-last-session` を付けて起動し直す。拡張機能がつながり直すまで30秒ほどかかる
 - `computer type` で日本語が入らない。`form_input` で値を入れ、`javascript_tool` で読み返す
 - `confirm()` が出ると拡張機能が止まる。押す前に `window.confirm = () => true` で上書きする
-- `file_upload` は scratchpad のファイルも渡せる
+- `file_upload` は scratchpad のファイルも渡せる。上限は1回 10.4MB で、`browser_batch` に並べると合算されて全部弾かれる。大きい写真は1枚ずつ別の呼び出しで渡す
 
 ## agent-browser の流れ
 
