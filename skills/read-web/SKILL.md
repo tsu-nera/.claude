@@ -21,6 +21,19 @@ description: Web ページの中身を読む手順。WebFetch が空・骨組み
 4. **それでも足りない（折りたたみの中、クリック後に出る、無限スクロール）→ agent-browser**
 5. **ログインが要るページ** は agent-browser の `--auto-connect`（起動中の Chrome の認証を流用）か
    `--profile Default`。bot 検出で空になるなら `--headed`
+6. **本人がそばにいて、ログイン後の画面で操作する（削除・アップロード・フォーム）** → Claude in Chrome
+   （`mcp__claude-in-chrome__*`）。本人の普段のプロファイルなので、chrome-gui（`~/.cache/chrome-agent`）の
+   「銀行・取引所にログインしない」という隔離は効かない。最後の確定ボタンは本人に確かめてから押す
+
+## Claude in Chrome の落とし穴
+
+- 全サイトが `This site is blocked by your site permissions` になる原因は、claude.ai → Settings →
+  Browser extension のサイト設定（拡張機能の approved sites や chrome://extensions ではない）。
+  変えた後は Chrome の再起動まで効かない。iiyama は起動時に前のタブを復元しない設定なので、
+  `--restore-last-session` を付けて起動し直す。拡張機能がつながり直すまで30秒ほどかかる
+- `computer type` で日本語が入らない。`form_input` で値を入れ、`javascript_tool` で読み返す
+- `confirm()` が出ると拡張機能が止まる。押す前に `window.confirm = () => true` で上書きする
+- `file_upload` は scratchpad のファイルも渡せる
 
 ## agent-browser の流れ
 
